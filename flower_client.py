@@ -1,6 +1,6 @@
 from imports import *
 from models import SparseAutoencoder
-from training import train, get_parameters, set_parameters
+from training import *
 
 class FlowerClient(fl.client.Client):
     def __init__(self, cid, net, trainloader, optimizer, scheduler, epochs_per_round):
