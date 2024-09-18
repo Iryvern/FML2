@@ -1,30 +1,32 @@
-from imports import *
+import torch
+import torch.nn as nn
 
 class SparseAutoencoder(nn.Module):
     def __init__(self):
         super(SparseAutoencoder, self).__init__()
-        # Encoder
+        # Adjust the input size to match 256x256 images (65536 pixels)
         self.encoder = nn.Sequential(
-            nn.Conv2d(1, 16, 3, stride=2, padding=1),  # Input is 1 channel
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(16, 32, 3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Conv2d(32, 64, 7),
-            nn.ReLU(),
+            nn.Linear(256 * 256, 128),  # Input size is now 65536
+            nn.ReLU(True),
+            nn.Linear(128, 64),
+            nn.ReLU(True),
+            nn.Linear(64, 12),
+            nn.ReLU(True)
         )
-        # Decoder
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, 7),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 16, 3, stride=2, padding=1, output_padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(16, 1, 3, stride=2, padding=1, output_padding=1),
+            nn.Linear(12, 64),
+            nn.ReLU(True),
+            nn.Linear(64, 128),
+            nn.ReLU(True),
+            nn.Linear(128, 256 * 256),  # Output size is now 65536
             nn.Sigmoid()
         )
 
     def forward(self, x):
+        # Flatten the input images from (batch_size, 1, 256, 256) to (batch_size, 65536)
+        x = x.view(x.size(0), -1)
         x = self.encoder(x)
         x = self.decoder(x)
+        # Reshape the output back to (batch_size, 1, 256, 256)
+        x = x.view(x.size(0), 1, 256, 256)
         return x

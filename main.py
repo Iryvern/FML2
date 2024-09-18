@@ -2,11 +2,12 @@ import gradio as gr
 import os
 from datasets import load_datasets  # Import load_datasets function
 from strategy import FedCustom  # Import FedCustom strategy
-from training import client_fn  # Import client_fn from training
+from flower_client import client_fn  # Import client_fn
 import flwr as fl  # Import Flower
 import signal
 import sys
 import warnings
+from torchvision import transforms
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Global variable to keep track of the running simulation process
@@ -38,9 +39,22 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     num_cpus = int(num_cpus)
     num_gpus = float(num_gpus)
 
+    # Define image transformations
+    train_transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+    test_transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
     # Load the dataset with user-provided parameters
-    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_test_split, seed)
-    
+    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform)
+
     # Set up the strategy with FedCustom
     strategy = FedCustom(
         initial_lr=initial_lr, 
@@ -48,9 +62,7 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
         gamma=gamma
     )
 
-    # Client function adjustments: Adjust your client_fn logic here
-    # Use the provided `client_fn` without passing unnecessary arguments
-    # Start the Flower simulation
+    # Start the Flower simulation with the adjusted client_fn logic
     try:
         fl.simulation.start_simulation(
             client_fn=lambda cid: client_fn(cid, trainloaders),  # Adjust to use lambda to pass trainloaders

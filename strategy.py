@@ -1,6 +1,6 @@
 from imports import *
 from models import SparseAutoencoder
-from training import get_parameters, set_parameters
+from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 
 class FedCustom(Strategy):

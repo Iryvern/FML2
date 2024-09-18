@@ -1,6 +1,22 @@
 from imports import *
 from models import SparseAutoencoder
-from training import *
+from training import train  # Only import the train function from training.py
+import flwr as fl
+import torch
+import numpy as np
+from collections import OrderedDict
+from skimage.metrics import structural_similarity as ssim
+import torchvision.transforms.functional as TF
+
+# Set parameters for the model from a list of NumPy arrays
+def set_parameters(net, parameters: list[np.ndarray]):
+    params_dict = zip(net.state_dict().keys(), parameters)
+    state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+    net.load_state_dict(state_dict, strict=True)
+
+# Get parameters from the model as a list of NumPy arrays
+def get_parameters(net) -> list[np.ndarray]:
+    return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
 class FlowerClient(fl.client.Client):
     def __init__(self, cid, net, trainloader, optimizer, scheduler, epochs_per_round):
@@ -9,7 +25,7 @@ class FlowerClient(fl.client.Client):
         self.trainloader = trainloader
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.epochs_per_round = epochs_per_round  # Number of epochs per client per round
+        self.epochs_per_round = epochs_per_round
 
     def get_parameters(self, ins: fl.common.GetParametersIns) -> fl.common.GetParametersRes:
         print(f"[Client {self.cid}] get_parameters")
@@ -22,11 +38,12 @@ class FlowerClient(fl.client.Client):
         print(f"[Client {self.cid}] fit, config: {ins.config}")
         ndarrays = parameters_to_ndarrays(ins.parameters)
         set_parameters(self.net, ndarrays)
-        train(self.net, self.trainloader, epochs=self.epochs_per_round, optimizer=self.optimizer)
+        train(self.net, self.trainloader, epochs=self.epochs_per_round, optimizer=self.optimizer)  # Pass optimizer
         updated_ndarrays = get_parameters(self.net)
         updated_parameters = ndarrays_to_parameters(updated_ndarrays)
         status = fl.common.Status(code=fl.common.Code.OK, message="Model trained")
         return fl.common.FitRes(status=status, parameters=updated_parameters, num_examples=len(self.trainloader), metrics={})
+
 
     def evaluate(self, ins: fl.common.EvaluateIns) -> fl.common.EvaluateRes:
         print(f"[Client {self.cid}] evaluate, config: {ins.config}")
@@ -39,10 +56,8 @@ class FlowerClient(fl.client.Client):
         self.net.eval()
         with torch.no_grad():
             for images in self.trainloader:
-                images = images.to(DEVICE)  # Ensure that images are moved to the correct device
+                images = images.to(DEVICE)
                 outputs = self.net(images)
-                
-                # Convert images and outputs to numpy arrays for SSIM calculation
                 images_np = images.cpu().numpy().transpose(0, 2, 3, 1)
                 outputs_np = outputs.cpu().numpy().transpose(0, 2, 3, 1)
                 
@@ -61,5 +76,13 @@ class FlowerClient(fl.client.Client):
             status=fl.common.Status(code=fl.common.Code.OK, message="Evaluation completed"),
             loss=1 - average_ssim,  # Loss is 1 - SSIM to keep lower loss better
             num_examples=total_items,
-            metrics={"ssim": average_ssim}  # Report SSIM
+            metrics={"ssim": average_ssim}
         )
+
+# Flower client function
+def client_fn(cid, trainloaders) -> FlowerClient:
+    net = SparseAutoencoder().to(DEVICE)  # Assuming DEVICE is globally defined or passed as a parameter
+    trainloader = trainloaders[int(cid)]  # Ensure trainloaders are passed as arguments
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+    return FlowerClient(cid, net, trainloader, optimizer, scheduler, epochs_per_round=3)
