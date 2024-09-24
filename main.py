@@ -27,7 +27,7 @@ def read_default_values():
 
 # Function to write default values to Default.txt
 def save_default_values(dataset_folder, train_test_split, seed, num_clients, lr, factor, patience, epochs_per_round,
-                        initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus):
+                        initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type):
     values = {
         'dataset_folder': dataset_folder,
         'train_test_split': train_test_split,
@@ -42,11 +42,13 @@ def save_default_values(dataset_folder, train_test_split, seed, num_clients, lr,
         'gamma': gamma,
         'num_rounds': num_rounds,
         'num_cpus': num_cpus,
-        'num_gpus': num_gpus
+        'num_gpus': num_gpus,
+        'model_type': model_type  # Save model type to Default.txt
     }
     with open(default_file_path, 'w') as f:
         for key, value in values.items():
             f.write(f"{key}={value}\n")
+
     return "Default values saved!"
 
 # Load default values at startup
@@ -55,7 +57,7 @@ default_values = read_default_values()
 # Function to start the training process
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
-                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus):
+                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type):
 
     # Cast the inputs to their appropriate types
     train_test_split = float(train_test_split)
@@ -118,6 +120,11 @@ def setup_gradio_ui():
         with gr.Tabs():
             with gr.TabItem("Variables"):
                 with gr.Row():
+                    model_type_input = gr.Dropdown(
+                        choices=["Image Anomaly Detection", "Time Series Classification"],
+                        label="Model Type", 
+                        value=default_values.get('model_type', "Image Anomaly Detection")  # Load from Default.txt
+                    )
                     start_button = gr.Button("Start Simulation")
                     save_button = gr.Button("Save changes")
                 
@@ -194,7 +201,7 @@ def setup_gradio_ui():
                         dataset_folder_input, train_test_split_input, seed_input, num_clients_input,
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
-                        num_cpus_input, num_gpus_input
+                        num_cpus_input, num_gpus_input, model_type_input  # Added model type input
                     ], 
                     outputs=output_text
                 )
@@ -206,7 +213,7 @@ def setup_gradio_ui():
                         dataset_folder_input, train_test_split_input, seed_input, num_clients_input, 
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
-                        num_cpus_input, num_gpus_input
+                        num_cpus_input, num_gpus_input, model_type_input  # Added model type input
                     ], 
                     outputs=output_text
                 )
