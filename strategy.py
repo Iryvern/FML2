@@ -75,7 +75,7 @@ class FedCustom(Strategy):
         net = SparseAutoencoder()  # Ensure the Autoencoder class is defined
         state_dict = aggregated_parameters_to_state_dict(aggregated_parameters)  # Convert aggregated_parameters to state_dict
         net.load_state_dict(state_dict)
-        torch.save(net.state_dict(), "latest_model.pth")
+        torch.save(net.state_dict(), "results/latest_model.pth")
 
         return aggregated_parameters_fl, {}
 
@@ -99,8 +99,8 @@ class FedCustom(Strategy):
         total_ssim = 0.0
         total_examples = 0
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ssim_file_path = 'ssim_scores.ncol'  # File to store SSIM scores
-        evaluation_file_path = 'aggregated_evaluation_loss.txt'  # File to store evaluation losses
+        ssim_file_path = 'results/ssim_scores.ncol'  # File to store SSIM scores
+        evaluation_file_path = 'results/aggregated_evaluation_loss.txt'  # File to store evaluation losses
 
         ssim_scores = []  # List to store SSIM scores
 

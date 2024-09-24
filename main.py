@@ -10,19 +10,13 @@ import warnings
 from torchvision import transforms
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Global variable to keep track of the running simulation process
-simulation_running = False
+if not os.path.exists('results'):
+    os.makedirs('results')
 
 # Function to start the training process
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
                    initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus):
-
-    global simulation_running
-    if simulation_running:
-        return "A simulation is already running. Stop the current simulation before starting a new one."
-
-    simulation_running = True
 
     # Cast the inputs to their appropriate types
     train_test_split = float(train_test_split)
@@ -72,24 +66,9 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
             client_resources={"num_cpus": num_cpus, "num_gpus": num_gpus}
         )
     except Exception as e:
-        simulation_running = False
         return f"Error: {e}"
 
     return "Training started with the provided parameters!"
-
-# Function to stop the training process
-def stop_training():
-    global simulation_running
-    if not simulation_running:
-        return "No simulation is currently running."
-
-    try:
-        # This will stop the Flower simulation safely
-        os.kill(os.getpid(), signal.SIGTERM)
-        simulation_running = False
-        return "Simulation stopped successfully."
-    except Exception as e:
-        return f"Failed to stop the simulation: {e}"
 
 # Gradio UI setup for starting and stopping the simulation
 def setup_gradio_ui():
@@ -99,7 +78,6 @@ def setup_gradio_ui():
         # Start and Stop buttons at the top
         with gr.Row():
             start_button = gr.Button("Start Simulation")
-            stop_button = gr.Button("Stop Simulation")
 
         output_text = gr.Textbox(label="Output")
         
@@ -137,10 +115,6 @@ def setup_gradio_ui():
             ], 
             outputs=output_text
         )
-
-        # Stop button action
-        stop_button.click(stop_training, inputs=[], outputs=output_text)
-
     return demo
 
 if __name__ == "__main__":
