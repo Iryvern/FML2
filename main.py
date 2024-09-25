@@ -104,7 +104,8 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
             num_clients=num_clients, 
             config=fl.server.ServerConfig(num_rounds=num_rounds), 
             strategy=strategy, 
-            client_resources={"num_cpus": num_cpus, "num_gpus": num_gpus}
+            client_resources={"num_cpus": num_cpus, "num_gpus": num_gpus},
+            ray_init_args = {"include_dashboard": True}
         )
     except Exception as e:
         return f"Error: {e}"
@@ -217,9 +218,6 @@ def setup_gradio_ui():
                     ], 
                     outputs=output_text
                 )
-
-            with gr.TabItem("Monitoring"):
-                gr.Markdown("Monitoring functionality will be added here.")
 
     return demo
 
