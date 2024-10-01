@@ -1,5 +1,7 @@
 import gradio as gr
 import os
+import psutil  # Import psutil for hardware information
+import GPUtil  # Import GPUtil for GPU information
 from datasets import load_datasets  # Import load_datasets function
 from strategy import FedCustom  # Import FedCustom strategy
 from flower_client import client_fn  # Import client_fn
@@ -96,6 +98,26 @@ def read_aggregated_evaluation_data(folder_name):
     else:
         return pd.DataFrame()
 
+# Function to get hardware information
+def get_hardware_info():
+    # CPU Info
+    cpu_info = f"CPU: {psutil.cpu_count(logical=True)} cores, {psutil.cpu_freq().max:.2f} MHz"
+
+    # Memory Info
+    memory_info = psutil.virtual_memory()
+    memory_total = f"Total Memory: {memory_info.total / (1024 ** 3):.2f} GB"
+
+    # GPU Info
+    gpus = GPUtil.getGPUs()
+    gpu_info = "No GPU found"
+    if gpus:
+        gpu_info = [f"GPU: {gpu.name}, Memory: {gpu.memoryTotal} MB" for gpu in gpus]
+        gpu_info = ", ".join(gpu_info)
+
+    # Collect all info
+    hardware_info = f"{cpu_info}\n{memory_total}\n{gpu_info}"
+    return hardware_info
+
 # Load default values at startup
 default_values = read_default_values()
 
@@ -157,12 +179,12 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
 
     return "Training started with the provided parameters!"
 
-# Gradio UI setup with tabs for "Variables" and "Monitoring"
+# Gradio UI setup with tabs for "Variables", "Monitoring", and "Info"
 def setup_gradio_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## Federated Learning Simulation UI")
         
-        # Create tabs for variables and monitoring
+        # Create tabs for variables, monitoring, and info
         with gr.Tabs():
             with gr.TabItem("Variables"):
                 with gr.Row():
@@ -292,6 +314,10 @@ def setup_gradio_ui():
                     inputs=folder_list, 
                     outputs=[resource_table, evaluation_table]
                 )
+
+            with gr.TabItem("Info"):
+                gr.Markdown("### Hardware Information")
+                hardware_info = gr.Textbox(value=get_hardware_info(), label="System Hardware Information", lines=5)
 
     return demo
 
