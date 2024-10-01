@@ -4,6 +4,7 @@ from datasets import load_datasets  # Import load_datasets function
 from strategy import FedCustom  # Import FedCustom strategy
 from flower_client import client_fn  # Import client_fn
 import flwr as fl  # Import Flower
+import pandas as pd  # Import pandas to read the text file and display as a table
 import warnings
 from torchvision import transforms
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -22,7 +23,6 @@ def read_default_values():
             lines = f.readlines()
             return {line.split('=')[0]: line.split('=')[1].strip() for line in lines}
     else:
-        # If no default file exists, return an empty dictionary
         return {}
 
 # Function to write default values to Default.txt
@@ -43,13 +43,58 @@ def save_default_values(dataset_folder, train_test_split, seed, num_clients, lr,
         'num_rounds': num_rounds,
         'num_cpus': num_cpus,
         'num_gpus': num_gpus,
-        'model_type': model_type  # Save model type to Default.txt
+        'model_type': model_type
     }
     with open(default_file_path, 'w') as f:
         for key, value in values.items():
             f.write(f"{key}={value}\n")
 
     return "Default values saved!"
+
+# Function to read resource consumption data from a file and convert to a DataFrame
+def read_resource_data(folder_name):
+    file_path = os.path.join('results', folder_name, 'resource_consumption.txt')
+    if os.path.exists(file_path):
+        try:
+            # Explicitly define column names
+            column_names = ["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"]
+            # Skip the first three lines to get to the data
+            df = pd.read_csv(file_path, sep=",", names=column_names, skiprows=3)
+            return df
+        except pd.errors.ParserError as e:
+            print(f"Error parsing file {file_path}: {e}")
+            return pd.DataFrame()  # Return an empty DataFrame if parsing fails
+    else:
+        return pd.DataFrame()
+
+# Function to read aggregated evaluation loss data from a file
+def read_aggregated_evaluation_data(folder_name):
+    file_path = os.path.join('results', folder_name, 'aggregated_evaluation_loss.txt')
+    if os.path.exists(file_path):
+        data = {
+            "Round": [],
+            "Learning Rate (LR)": [],
+            "Aggregated Test SSIM": []
+        }
+        try:
+            with open(file_path, 'r') as file:
+                lines = file.readlines()
+                for line in lines:
+                    if "Round" in line and "LR" in line:
+                        parts = line.strip().split(' - ')
+                        round_number = int(parts[1].split(' ')[1])
+                        lr = float(parts[2].split(' ')[1])
+                        data["Round"].append(round_number)
+                        data["Learning Rate (LR)"].append(lr)
+                    elif "Aggregated Test SSIM" in line:
+                        ssim_value = float(line.strip().split(' ')[-1])
+                        data["Aggregated Test SSIM"].append(ssim_value)
+            return pd.DataFrame(data)
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            return pd.DataFrame()
+    else:
+        return pd.DataFrame()
 
 # Load default values at startup
 default_values = read_default_values()
@@ -100,12 +145,12 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     # Start the Flower simulation with the adjusted client_fn logic
     try:
         fl.simulation.start_simulation(
-            client_fn=lambda cid: client_fn(cid, trainloaders),  # Adjust to use lambda to pass trainloaders
+            client_fn=lambda cid: client_fn(cid, trainloaders),
             num_clients=num_clients, 
             config=fl.server.ServerConfig(num_rounds=num_rounds), 
             strategy=strategy, 
             client_resources={"num_cpus": num_cpus, "num_gpus": num_gpus},
-            ray_init_args = {"include_dashboard": True}
+            ray_init_args={"include_dashboard": True}
         )
     except Exception as e:
         return f"Error: {e}"
@@ -124,7 +169,7 @@ def setup_gradio_ui():
                     model_type_input = gr.Dropdown(
                         choices=["Image Anomaly Detection", "Time Series Classification"],
                         label="Model Type", 
-                        value=default_values.get('model_type', "Image Anomaly Detection")  # Load from Default.txt
+                        value=default_values.get('model_type', "Image Anomaly Detection")
                     )
                     start_button = gr.Button("Start Simulation")
                     save_button = gr.Button("Save changes")
@@ -202,7 +247,7 @@ def setup_gradio_ui():
                         dataset_folder_input, train_test_split_input, seed_input, num_clients_input,
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
-                        num_cpus_input, num_gpus_input, model_type_input  # Added model type input
+                        num_cpus_input, num_gpus_input, model_type_input
                     ], 
                     outputs=output_text
                 )
@@ -214,9 +259,38 @@ def setup_gradio_ui():
                         dataset_folder_input, train_test_split_input, seed_input, num_clients_input, 
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
-                        num_cpus_input, num_gpus_input, model_type_input  # Added model type input
+                        num_cpus_input, num_gpus_input, model_type_input
                     ], 
                     outputs=output_text
+                )
+
+            with gr.TabItem("Monitoring"):
+                gr.Markdown("### Resource Consumption Monitoring")
+                
+                # List the folders in "results"
+                def get_results_folders():
+                    return [folder for folder in os.listdir('results') if os.path.isdir(os.path.join('results', folder))]
+
+                folder_list = gr.Dropdown(
+                    choices=get_results_folders(),
+                    label="Select Results Folder",
+                    interactive=True
+                )
+
+                # Display tables for selected folder
+                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"], visible=False)
+                evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Aggregated Test SSIM"], visible=False)
+
+                # Update the tables when a folder is selected
+                def update_tables(folder_name):
+                    resource_df = read_resource_data(folder_name)
+                    evaluation_df = read_aggregated_evaluation_data(folder_name)
+                    return gr.update(value=resource_df, visible=True), gr.update(value=evaluation_df, visible=True)
+
+                folder_list.change(
+                    fn=update_tables, 
+                    inputs=folder_list, 
+                    outputs=[resource_table, evaluation_table]
                 )
 
     return demo
