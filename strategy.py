@@ -4,6 +4,8 @@ from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 import os
 from datetime import datetime
+import psutil
+import GPUtil
 
 class FedCustom(Strategy):
     def __init__(
@@ -31,6 +33,46 @@ class FedCustom(Strategy):
         # Create a new subfolder within "results" using the current date and time
         self.results_subfolder = os.path.join("results", datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         os.makedirs(self.results_subfolder, exist_ok=True)
+
+        # Initialize the resource consumption log file
+        self.resource_consumption_file = os.path.join(self.results_subfolder, "resource_consumption.txt")
+        self.initialize_resource_log()
+
+    def initialize_resource_log(self):
+        """Initialize the resource consumption log file with column headers."""
+        # Get maximum hardware specifications
+        cpu_count = psutil.cpu_count(logical=True)
+        total_memory = round(psutil.virtual_memory().total / (1024 ** 3), 2)  # in GB
+        gpus = GPUtil.getGPUs()
+        gpu_name = gpus[0].name if gpus else "N/A"
+        total_gpu_memory = round(gpus[0].memoryTotal, 2) if gpus else "N/A"  # in MB
+
+        with open(self.resource_consumption_file, 'w') as file:
+            file.write(f"Resource Consumption Log\n")
+            file.write(f"CPU (Cores: {cpu_count}), GPU (Model: {gpu_name}, Memory: {total_gpu_memory} MB), Memory (Total: {total_memory} GB), Network (Bytes Sent/Received)\n")
+            file.write("Round, CPU Usage (%), GPU Usage (%), Memory Usage (%), Network Sent (MB), Network Received (MB)\n")
+
+    def log_resource_consumption(self, server_round):
+        """Log the resource consumption to the file."""
+        # Measure CPU usage
+        cpu_usage = psutil.cpu_percent(interval=1)
+        
+        # Measure GPU usage
+        gpus = GPUtil.getGPUs()
+        gpu_usage = gpus[0].load * 100 if gpus else 0
+        
+        # Measure Memory usage
+        memory_info = psutil.virtual_memory()
+        memory_usage = memory_info.percent
+        
+        # Measure Network usage
+        net_io = psutil.net_io_counters()
+        net_sent = round(net_io.bytes_sent / (1024 ** 2), 2)  # Convert to MB
+        net_received = round(net_io.bytes_recv / (1024 ** 2), 2)  # Convert to MB
+
+        # Log the data into the file
+        with open(self.resource_consumption_file, 'a') as file:
+            file.write(f"{server_round}, {cpu_usage}, {gpu_usage}, {memory_usage}, {net_sent}, {net_received}\n")
 
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
         """Initialize global model parameters using Autoencoder."""
@@ -71,6 +113,9 @@ class FedCustom(Strategy):
         """Aggregate client model updates and prepare the global model for redistribution."""
         if not results:
             return None, {}
+
+        # Log resource consumption
+        self.log_resource_consumption(server_round)
 
         # Collect parameters from the results
         parameters_list = [parameters_to_ndarrays(res.parameters) for client, res in results]
