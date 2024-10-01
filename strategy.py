@@ -2,6 +2,8 @@ from imports import *
 from models import SparseAutoencoder
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
+import os
+from datetime import datetime
 
 class FedCustom(Strategy):
     def __init__(
@@ -11,9 +13,9 @@ class FedCustom(Strategy):
         min_fit_clients: int = 2,
         min_evaluate_clients: int = 2,
         min_available_clients: int = 2,
-        initial_lr: float = 0.0005,  # Slightly smaller initial learning rate
-        step_size: int = 30,  # Increase the step size to allow more rounds before decay
-        gamma: float = 0.9,  # Adjust gamma to control the decay rate
+        initial_lr: float = 0.0005,
+        step_size: int = 30,
+        gamma: float = 0.9,
     ) -> None:
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
@@ -24,12 +26,16 @@ class FedCustom(Strategy):
         self.initial_lr = initial_lr
         self.step_size = step_size
         self.gamma = gamma
-        self.scheduler = None  # Scheduler will be initialized later
+        self.scheduler = None
+
+        # Create a new subfolder within "results" using the current date and time
+        self.results_subfolder = os.path.join("results", datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        os.makedirs(self.results_subfolder, exist_ok=True)
 
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
         """Initialize global model parameters using Autoencoder."""
-        net = SparseAutoencoder()  # Ensure the Autoencoder class is defined
-        ndarrays = get_parameters(net)  # Ensure get_parameters function is defined
+        net = SparseAutoencoder()
+        ndarrays = get_parameters(net)
         return fl.common.ndarrays_to_parameters(ndarrays)
 
     def configure_fit(
@@ -72,10 +78,10 @@ class FedCustom(Strategy):
         aggregated_parameters_fl = ndarrays_to_parameters(aggregated_parameters)
 
         # Save the latest model's state_dict
-        net = SparseAutoencoder()  # Ensure the Autoencoder class is defined
-        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters)  # Convert aggregated_parameters to state_dict
+        net = SparseAutoencoder()
+        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters)
         net.load_state_dict(state_dict)
-        torch.save(net.state_dict(), "results/latest_model.pth")
+        torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
 
         return aggregated_parameters_fl, {}
 
@@ -93,18 +99,19 @@ class FedCustom(Strategy):
         return [(client, evaluate_ins) for client in clients]
 
     def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
+        """Aggregate evaluation results and update global metrics."""
         if not results:
             return None, {}
 
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ssim_file_path = os.path.join(self.results_subfolder, 'ssim_scores.ncol')
+        evaluation_file_path = os.path.join(self.results_subfolder, 'aggregated_evaluation_loss.txt')
+
+        ssim_scores = []
         total_ssim = 0.0
         total_examples = 0
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ssim_file_path = 'results/ssim_scores.ncol'  # File to store SSIM scores
-        evaluation_file_path = 'results/aggregated_evaluation_loss.txt'  # File to store evaluation losses
 
-        ssim_scores = []  # List to store SSIM scores
-
-        # Collect SSIM scores and compute the total SSIM
+        # Collect SSIM scores
         for client, res in results:
             if 'ssim' in res.metrics:
                 ssim_scores.append((client.cid, res.metrics['ssim']))
@@ -128,12 +135,11 @@ class FedCustom(Strategy):
             self.optimizer = torch.optim.Adam([torch.nn.Parameter(torch.tensor([1.0]))], lr=self.initial_lr)
             self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.step_size, gamma=self.gamma)
 
-        # Update the scheduler every round
+        # Update the scheduler and append to the evaluation file
         if aggregated_ssim is not None:
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
 
-            # Append new data to the evaluation file
             with open(evaluation_file_path, 'a') as file:
                 file.write(f"Time: {current_time} - Round {server_round} - LR {current_lr}\n")
                 if aggregated_ssim is not None:
@@ -157,7 +163,6 @@ class FedCustom(Strategy):
         """Use a fraction of available clients for evaluation."""
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
-
 
 def aggregated_parameters_to_state_dict(aggregated_parameters):
     """Convert aggregated parameters to a state dictionary."""
