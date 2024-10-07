@@ -18,6 +18,7 @@ class FedCustom(Strategy):
         initial_lr: float = 0.0005,
         step_size: int = 30,
         gamma: float = 0.9,
+        data_type: str = "image"  # New parameter to specify the data type ("image" or "gps")
     ) -> None:
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
@@ -29,6 +30,7 @@ class FedCustom(Strategy):
         self.step_size = step_size
         self.gamma = gamma
         self.scheduler = None
+        self.data_type = data_type  # Store the data type
 
         # Create a new subfolder within "results" using the current date and time
         self.results_subfolder = os.path.join("results", datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
@@ -93,7 +95,7 @@ class FedCustom(Strategy):
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=self.min_fit_clients)
 
         fit_configurations = [
-            (client, FitIns(parameters, {"server_round": server_round}))
+            (client, FitIns(parameters, {"server_round": server_round, "data_type": self.data_type}))  # Pass data_type in config
             for client in clients
         ]
         return fit_configurations
@@ -135,7 +137,7 @@ class FedCustom(Strategy):
         if self.fraction_evaluate == 0.0:
             return []
 
-        config = {"server_round": server_round, "task": "evaluate"}
+        config = {"server_round": server_round, "task": "evaluate", "data_type": self.data_type}  # Pass data_type in config
 
         sample_size, min_num_clients = self.num_evaluation_clients(client_manager.num_available())
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=min_num_clients)

@@ -58,14 +58,12 @@ def read_resource_data(folder_name):
     file_path = os.path.join('results', folder_name, 'resource_consumption.txt')
     if os.path.exists(file_path):
         try:
-            # Explicitly define column names
             column_names = ["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"]
-            # Skip the first three lines to get to the data
             df = pd.read_csv(file_path, sep=",", names=column_names, skiprows=3)
             return df
         except pd.errors.ParserError as e:
             print(f"Error parsing file {file_path}: {e}")
-            return pd.DataFrame()  # Return an empty DataFrame if parsing fails
+            return pd.DataFrame()
     else:
         return pd.DataFrame()
 
@@ -100,21 +98,14 @@ def read_aggregated_evaluation_data(folder_name):
 
 # Function to get hardware information
 def get_hardware_info():
-    # CPU Info
     cpu_info = f"CPU: {psutil.cpu_count(logical=True)} cores, {psutil.cpu_freq().max:.2f} MHz"
-
-    # Memory Info
     memory_info = psutil.virtual_memory()
     memory_total = f"Total Memory: {memory_info.total / (1024 ** 3):.2f} GB"
-
-    # GPU Info
     gpus = GPUtil.getGPUs()
     gpu_info = "No GPU found"
     if gpus:
         gpu_info = [f"GPU: {gpu.name}, Memory: {gpu.memoryTotal} MB" for gpu in gpus]
         gpu_info = ", ".join(gpu_info)
-
-    # Collect all info
     hardware_info = f"{cpu_info}\n{memory_total}\n{gpu_info}"
     return hardware_info
 
@@ -126,7 +117,6 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
                    lr, factor, patience, epochs_per_round,
                    initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type):
 
-    # Cast the inputs to their appropriate types
     train_test_split = float(train_test_split)
     seed = int(seed)
     num_clients = int(num_clients)
@@ -154,17 +144,20 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
         transforms.Normalize((0.5,), (0.5,))
     ])
 
-    # Load the dataset with user-provided parameters
-    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform)
+    # Decide which dataset to load based on model_type
+    if model_type == "Image Anomaly Detection":
+        trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, data_type="image")
+    elif model_type == "Time Series Anomaly Detection":
+        trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, data_type="gps")
 
-    # Set up the strategy with FedCustom
+    # Set up the strategy with FedCustom, passing the model_type as data_type
     strategy = FedCustom(
         initial_lr=initial_lr, 
         step_size=step_size, 
-        gamma=gamma
+        gamma=gamma,
+        data_type=model_type.lower().replace(' ', '_')  # Convert to a consistent format for data_type
     )
 
-    # Start the Flower simulation with the adjusted client_fn logic
     try:
         fl.simulation.start_simulation(
             client_fn=lambda cid: client_fn(cid, trainloaders),
@@ -189,7 +182,7 @@ def setup_gradio_ui():
             with gr.TabItem("Variables"):
                 with gr.Row():
                     model_type_input = gr.Dropdown(
-                        choices=["Image Anomaly Detection", "Time Series Classification"],
+                        choices=["Image Anomaly Detection", "Time Series Anomaly Detection"],
                         label="Model Type", 
                         value=default_values.get('model_type', "Image Anomaly Detection")
                     )
