@@ -3,6 +3,7 @@ import pandas as pd
 import os
 from PIL import Image
 import numpy as np
+import torch
 
 # ---------------------
 # ChestXrayDataset Class
@@ -28,29 +29,35 @@ class ChestXrayDataset(Dataset):
 # ----------------
 # GPSDataset Class
 # ----------------
-class GPSDataset(Dataset):
-    def __init__(self, csv_file, selected_columns=None, exclude_columns=None, transform=None):
-        self.data = pd.read_csv(csv_file)
+# datasets.py
 
-        # Exclude non-numeric columns
+class GPSDataset(Dataset):
+    def __init__(self, data_path, selected_columns=None, exclude_columns=None, transform=None):
+        # Use pandas to read the CSV file
+        self.data = pd.read_csv(data_path)
+
+        # Handle selected and excluded columns if provided
+        if selected_columns:
+            self.data = self.data[selected_columns]
+
         if exclude_columns:
-            self.data = self.data.drop(columns=exclude_columns)
-        
-        self.selected_columns = selected_columns if selected_columns else self.data.columns.tolist()
+            existing_columns = [col for col in exclude_columns if col in self.data.columns]
+            self.data = self.data.drop(columns=existing_columns)
+
+        # Convert dataframe to numpy array
+        self.data = self.data.to_numpy()
+
         self.transform = transform
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        sample = self.data.iloc[idx][self.selected_columns].values.astype('float32')
-        
-        # Apply transformation only if provided and ensure it's not an image transform
-        if self.transform is not None:
-            if isinstance(sample, np.ndarray):
-                sample = self.transform(sample)  # Custom transform for numerical data
-        
+        sample = self.data[idx]
+        if self.transform:
+            sample = self.transform(sample)
         return sample
+
 
 # ----------------------
 # Helper Functions
