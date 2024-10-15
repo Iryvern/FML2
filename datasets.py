@@ -1,8 +1,8 @@
-from imports import *
 from torch.utils.data import Dataset, DataLoader, random_split
-from PIL import Image
 import pandas as pd
 import os
+from PIL import Image
+import numpy as np
 
 # ---------------------
 # ChestXrayDataset Class
@@ -29,8 +29,13 @@ class ChestXrayDataset(Dataset):
 # GPSDataset Class
 # ----------------
 class GPSDataset(Dataset):
-    def __init__(self, csv_file, selected_columns=None, transform=None):
+    def __init__(self, csv_file, selected_columns=None, exclude_columns=None, transform=None):
         self.data = pd.read_csv(csv_file)
+
+        # Exclude non-numeric columns
+        if exclude_columns:
+            self.data = self.data.drop(columns=exclude_columns)
+        
         self.selected_columns = selected_columns if selected_columns else self.data.columns.tolist()
         self.transform = transform
 
@@ -40,9 +45,11 @@ class GPSDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data.iloc[idx][self.selected_columns].values.astype('float32')
         
-        if self.transform:
-            sample = self.transform(sample)
-            
+        # Apply transformation only if provided and ensure it's not an image transform
+        if self.transform is not None:
+            if isinstance(sample, np.ndarray):
+                sample = self.transform(sample)  # Custom transform for numerical data
+        
         return sample
 
 # ----------------------
@@ -84,19 +91,29 @@ def load_datasets(num_clients: int, data_path: str, train_transform=None, test_t
 
     elif data_type == "gps":
         # Load GPS dataset
+        exclude_columns = ['ins_status', 'utm_zone']  # Hardcoded exclusion of non-numeric columns
+
+        # If data_path is a folder, automatically select the first CSV file in it
+        if os.path.isdir(data_path):
+            files_in_dir = [f for f in os.listdir(data_path) if f.endswith('.csv')]
+            if len(files_in_dir) == 0:
+                raise FileNotFoundError(f"No CSV files found in directory: {data_path}")
+            data_path = os.path.join(data_path, files_in_dir[0])
+
+        # Read data and get the numeric columns
         data = pd.read_csv(data_path)
-        columns = data.columns.tolist()
+        columns = [col for col in data.columns if col not in exclude_columns]
         column_splits = split_dataset_by_columns(num_clients, columns)
 
         # Create datasets and dataloaders for each client
         trainloaders = []
         for client_columns in column_splits:
-            trainset = GPSDataset(data_path, selected_columns=client_columns, transform=train_transform)
+            trainset = GPSDataset(data_path, selected_columns=client_columns, exclude_columns=exclude_columns, transform=None)  # No image transform
             trainloader = DataLoader(trainset, batch_size=64, shuffle=True)
             trainloaders.append(trainloader)
 
         # Create a test dataset with all columns for overall evaluation
-        testset = GPSDataset(data_path, selected_columns=columns, transform=test_transform)
+        testset = GPSDataset(data_path, selected_columns=columns, exclude_columns=exclude_columns, transform=None)  # No image transform
         testloader = DataLoader(testset, batch_size=64, shuffle=False)
 
     else:
