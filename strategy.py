@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, GRUAnomalyDetector
+from models import SparseAutoencoder
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 import os
@@ -18,7 +18,6 @@ class FedCustom(Strategy):
         initial_lr: float = 0.0005,
         step_size: int = 30,
         gamma: float = 0.9,
-        data_type: str = "image"  # New parameter to specify the data type ("image", "gps", or "time_series_anomaly_detection")
     ) -> None:
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
@@ -30,7 +29,6 @@ class FedCustom(Strategy):
         self.step_size = step_size
         self.gamma = gamma
         self.scheduler = None
-        self.data_type = data_type  # Store the data type
 
         # Create a new subfolder within "results" using the current date and time
         self.results_subfolder = os.path.join("results", datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
@@ -77,16 +75,8 @@ class FedCustom(Strategy):
             file.write(f"{server_round}, {cpu_usage}, {gpu_usage}, {memory_usage}, {net_sent}, {net_received}\n")
 
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
-        if self.data_type == "image":
-            net = SparseAutoencoder()
-        elif self.data_type in ["gps", "time_series_anomaly_detection"]:
-            input_size = 6
-            hidden_size = 128
-            num_layers = 2
-            output_size = 6
-            net = GRUAnomalyDetector(input_size, hidden_size, num_layers, output_size)
-        else:
-            raise ValueError(f"Unsupported data_type: {self.data_type}. Please use 'image', 'gps', or 'time_series_anomaly_detection'.")
+        """Initialize global model parameters using Autoencoder."""
+        net = SparseAutoencoder()
         ndarrays = get_parameters(net)
         return fl.common.ndarrays_to_parameters(ndarrays)
 
@@ -103,7 +93,7 @@ class FedCustom(Strategy):
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=self.min_fit_clients)
 
         fit_configurations = [
-            (client, FitIns(parameters, {"server_round": server_round, "data_type": self.data_type}))  # Pass data_type in config
+            (client, FitIns(parameters, {"server_round": server_round}))
             for client in clients
         ]
         return fit_configurations
@@ -133,18 +123,8 @@ class FedCustom(Strategy):
         aggregated_parameters_fl = ndarrays_to_parameters(aggregated_parameters)
 
         # Save the latest model's state_dict
-        if self.data_type == "image":
-            net = SparseAutoencoder()
-        elif self.data_type in ["gps", "time_series_anomaly_detection"]:
-            input_size = 6  # Adjust this as needed to match the number of features for time series
-            hidden_size = 128
-            num_layers = 2
-            output_size = 6  # Same as input size for reconstruction
-            net = GRUAnomalyDetector(input_size, hidden_size, num_layers, output_size)
-        else:
-            raise ValueError(f"Unsupported data_type: {self.data_type}. Please use 'image', 'gps', or 'time_series_anomaly_detection'.")
-        
-        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters, net)
+        net = SparseAutoencoder()
+        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters)
         net.load_state_dict(state_dict)
         torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
 
@@ -155,7 +135,7 @@ class FedCustom(Strategy):
         if self.fraction_evaluate == 0.0:
             return []
 
-        config = {"server_round": server_round, "task": "evaluate", "data_type": self.data_type}  # Pass data_type in config
+        config = {"server_round": server_round, "task": "evaluate"}
 
         sample_size, min_num_clients = self.num_evaluation_clients(client_manager.num_available())
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=min_num_clients)
@@ -229,10 +209,10 @@ class FedCustom(Strategy):
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
 
-def aggregated_parameters_to_state_dict(aggregated_parameters, model):
+def aggregated_parameters_to_state_dict(aggregated_parameters):
     """Convert aggregated parameters to a state dictionary."""
     state_dict = {}
-    param_keys = list(model.state_dict().keys())
+    param_keys = list(SparseAutoencoder().state_dict().keys())
     for key, param in zip(param_keys, aggregated_parameters):
         state_dict[key] = torch.tensor(param)
     return state_dict
