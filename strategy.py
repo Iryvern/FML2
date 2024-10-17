@@ -166,9 +166,10 @@ class FedCustom(Strategy):
         total_examples = 0
 
         # Collect SSIM scores
-        for client, res in results:
+        for i, (client, res) in enumerate(results, start=1):  # Enumerate to assign simple client IDs (1, 2, 3, ...)
             if 'ssim' in res.metrics:
-                ssim_scores.append((client.cid, res.metrics['ssim']))
+                ssim_scores.append((i, res.metrics['ssim']))  # Use the enumerated ID (i) instead of client.cid
+
 
             total_ssim += res.metrics['ssim'] * res.num_examples
             total_examples += res.num_examples

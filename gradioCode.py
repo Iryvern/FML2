@@ -3,6 +3,8 @@ import gradio as gr
 import pandas as pd
 import psutil  # Import psutil for hardware information
 import GPUtil  # Import GPUtil for GPU information
+import matplotlib.pyplot as plt
+import tempfile
 
 # Path to the Default.txt file
 default_file_path = "Default.txt"
@@ -19,6 +21,43 @@ def read_default_values():
             return {line.split('=')[0]: line.split('=')[1].strip() for line in lines}
     else:
         return {}
+
+
+def plot_ssim_scores(file_path: str):
+    """Plot the SSIM scores of each client per round and save the image to a file."""
+    round_times = []
+    round_numbers = []
+    client_ssim = {}
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith('Time'):
+                parts = line.split(' - ')
+                round_times.append(parts[1])
+                round_numbers.append(int(parts[1].split()[1]))
+            else:
+                client_id, ssim_score = line.split()
+                if client_id not in client_ssim:
+                    client_ssim[client_id] = []
+                client_ssim[client_id].append(float(ssim_score))
+
+    # Plotting
+    plt.figure(figsize=(12, 8))
+    for client_id, ssim_scores in client_ssim.items():
+        plt.plot(round_numbers, ssim_scores, label=f'Client {client_id}')
+
+    plt.xlabel('Round')
+    plt.ylabel('SSIM Score')
+    plt.title('SSIM Score per Client per Round')
+    plt.legend()
+    plt.grid(True)
+
+    # Save plot to a temporary file
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    plt.savefig(temp_file.name)
+    plt.close()
+
+    return temp_file.name  # Return the file path
 
 # Function to write default values to Default.txt
 def save_default_values(dataset_folder, train_test_split, seed, num_clients, lr, factor, patience, epochs_per_round,

@@ -145,28 +145,33 @@ def setup_gradio_ui():
             with gr.TabItem("Performance Monitoring"):
                 gr.Markdown("### Performance Monitoring")
 
-                # List the folders in "results"
-                def get_results_folders():
-                    return [folder for folder in os.listdir('results') if os.path.isdir(os.path.join('results', folder))]
-
-                folder_list_performance = gr.Dropdown(
+                folder_list = gr.Dropdown(
                     choices=get_results_folders(),
                     label="Select Results Folder",
                     interactive=True
                 )
 
-                # Display table for selected folder's performance monitoring
+                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"], visible=False)
                 evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Aggregated Test SSIM"], visible=False)
 
-                # Update the table when a folder is selected
-                def update_performance_table(folder_name):
+                # Update the tables and plot when a folder is selected
+                def update_performance(folder_name):
+                    resource_df = read_resource_data(folder_name)
                     evaluation_df = read_aggregated_evaluation_data(folder_name)
-                    return gr.update(value=evaluation_df, visible=True)
+                    
+                    # Get path to the plot image
+                    plot_image_path = plot_ssim_scores(os.path.join('results', folder_name, 'ssim_scores.ncol'))
+                    
+                    return gr.update(value=resource_df, visible=True), gr.update(value=evaluation_df, visible=True), plot_image_path
 
-                folder_list_performance.change(
-                    fn=update_performance_table, 
-                    inputs=folder_list_performance, 
-                    outputs=evaluation_table
+                # Add the graph component
+                plot_output = gr.Image(type="filepath")  # Use "filepath" for the image file
+
+                # Set up the change listener to update tables and plot
+                folder_list.change(
+                    fn=update_performance,
+                    inputs=folder_list,
+                    outputs=[resource_table, evaluation_table, plot_output]
                 )
 
             with gr.TabItem("Info"):
