@@ -115,33 +115,58 @@ def setup_gradio_ui():
                     outputs=output_text
                 )
 
-            with gr.TabItem("Monitoring"):
-                gr.Markdown("### Resource Consumption Monitoring")
+            with gr.TabItem("Hardware Monitoring"):
+                gr.Markdown("### Hardware Resource Monitoring")
                 
                 # List the folders in "results"
                 def get_results_folders():
                     return [folder for folder in os.listdir('results') if os.path.isdir(os.path.join('results', folder))]
 
-                folder_list = gr.Dropdown(
+                folder_list_hardware = gr.Dropdown(
                     choices=get_results_folders(),
                     label="Select Results Folder",
                     interactive=True
                 )
 
-                # Display tables for selected folder
+                # Display table for selected folder's resource monitoring
                 resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"], visible=False)
+
+                # Update the table when a folder is selected
+                def update_hardware_table(folder_name):
+                    resource_df = read_resource_data(folder_name)
+                    return gr.update(value=resource_df, visible=True)
+
+                folder_list_hardware.change(
+                    fn=update_hardware_table, 
+                    inputs=folder_list_hardware, 
+                    outputs=resource_table
+                )
+
+            with gr.TabItem("Performance Monitoring"):
+                gr.Markdown("### Performance Monitoring")
+
+                # List the folders in "results"
+                def get_results_folders():
+                    return [folder for folder in os.listdir('results') if os.path.isdir(os.path.join('results', folder))]
+
+                folder_list_performance = gr.Dropdown(
+                    choices=get_results_folders(),
+                    label="Select Results Folder",
+                    interactive=True
+                )
+
+                # Display table for selected folder's performance monitoring
                 evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Aggregated Test SSIM"], visible=False)
 
-                # Update the tables when a folder is selected
-                def update_tables(folder_name):
-                    resource_df = read_resource_data(folder_name)
+                # Update the table when a folder is selected
+                def update_performance_table(folder_name):
                     evaluation_df = read_aggregated_evaluation_data(folder_name)
-                    return gr.update(value=resource_df, visible=True), gr.update(value=evaluation_df, visible=True)
+                    return gr.update(value=evaluation_df, visible=True)
 
-                folder_list.change(
-                    fn=update_tables, 
-                    inputs=folder_list, 
-                    outputs=[resource_table, evaluation_table]
+                folder_list_performance.change(
+                    fn=update_performance_table, 
+                    inputs=folder_list_performance, 
+                    outputs=evaluation_table
                 )
 
             with gr.TabItem("Info"):

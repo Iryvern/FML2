@@ -38,6 +38,9 @@ class FedCustom(Strategy):
         self.resource_consumption_file = os.path.join(self.results_subfolder, "resource_consumption.txt")
         self.initialize_resource_log()
 
+        # Log initial resource consumption as Round 0
+        self.log_initial_resource_consumption()
+
     def initialize_resource_log(self):
         """Initialize the resource consumption log file with column headers."""
         # Get maximum hardware specifications
@@ -51,6 +54,11 @@ class FedCustom(Strategy):
             file.write(f"Resource Consumption Log\n")
             file.write(f"CPU (Cores: {cpu_count}), GPU (Model: {gpu_name}, Memory: {total_gpu_memory} MB), Memory (Total: {total_memory} GB), Network (Bytes Sent/Received)\n")
             file.write("Round, CPU Usage (%), GPU Usage (%), Memory Usage (%), Network Sent (MB), Network Received (MB)\n")
+
+    def log_initial_resource_consumption(self):
+        """Log the resource consumption at the start of the simulation as Round 0."""
+        print("Logging initial resource consumption for Round 0")
+        self.log_resource_consumption(0)
 
     def log_resource_consumption(self, server_round):
         """Log the resource consumption to the file."""
@@ -73,6 +81,7 @@ class FedCustom(Strategy):
         # Log the data into the file
         with open(self.resource_consumption_file, 'a') as file:
             file.write(f"{server_round}, {cpu_usage}, {gpu_usage}, {memory_usage}, {net_sent}, {net_received}\n")
+
 
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
         """Initialize global model parameters using Autoencoder."""
