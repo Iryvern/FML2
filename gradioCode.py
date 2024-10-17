@@ -22,6 +22,94 @@ def read_default_values():
     else:
         return {}
 
+metrics_to_plot = ['CPU', 'GPU']
+
+def plot_hardware_resource_consumption(file_path: str):
+    """Plot CPU and GPU resource consumption per client per round and save the images to files."""
+    import matplotlib.pyplot as plt
+    import tempfile
+
+    # Data structures to hold the metrics
+    client_metrics = {}
+
+    # Read the file
+    with open(file_path, 'r') as file:
+        current_round = None
+        for line in file:
+            line = line.strip()
+            if line.startswith('Round'):
+                # New round
+                current_round = int(line.split()[1])
+            elif line.startswith('Client'):
+                # Parse client metrics line
+                client_info, metrics_info = line.split(': ', 1)
+                client_id = client_info.strip().split()[1]
+
+                # Parse the metrics
+                metrics = metrics_info.strip().split(', ')
+                metrics_dict = {}
+                for metric in metrics:
+                    if ':' in metric:
+                        key, value = metric.split(':')
+                        key = key.strip()
+                        value = value.strip()
+                    else:
+                        key_value = metric.strip().split()
+                        if len(key_value) >= 2:
+                            key = key_value[0]
+                            value = key_value[1]
+                        else:
+                            continue  # skip if cannot parse
+                    metrics_dict[key] = value
+
+                # Initialize data structures if necessary
+                if client_id not in client_metrics:
+                    client_metrics[client_id] = {
+                        'rounds': [],
+                        'CPU': [],
+                        'GPU': [],
+                    }
+
+                # Append the data
+                client_metrics[client_id]['rounds'].append(current_round)
+                # For each metric, remove '%' or 'MB' and convert to float
+                cpu_usage = float(metrics_dict.get('CPU', '0%').replace('%', ''))
+                gpu_usage = float(metrics_dict.get('GPU', '0%').replace('%', ''))
+
+                # Append to lists
+                client_metrics[client_id]['CPU'].append(cpu_usage)
+                client_metrics[client_id]['GPU'].append(gpu_usage)
+
+    # Now we can plot the data
+    # For each metric, create a plot
+    metrics_to_plot = ['CPU', 'GPU']
+    plot_paths = {}
+
+    for metric in metrics_to_plot:
+        plt.figure(figsize=(12, 8))
+        for client_id in client_metrics:
+            rounds = client_metrics[client_id]['rounds']
+            values = client_metrics[client_id][metric]
+            plt.plot(rounds, values, label=f'Client {client_id}')
+
+        plt.xlabel('Round')
+        plt.ylabel(f'{metric} Usage (%)')
+        plt.title(f'{metric} Usage per Client per Round')
+        plt.legend()
+        plt.grid(True)
+
+        # Save plot to a temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        plt.savefig(temp_file.name)
+        plt.close()
+
+        # Store the path
+        plot_paths[metric] = temp_file.name
+
+    return plot_paths  # Return the dictionary of plot paths
+
+
+
 def plot_ssim_scores(file_path: str):
     """Plot the SSIM scores of each client per round and save the image to a file."""
     round_times = []

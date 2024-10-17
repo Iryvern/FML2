@@ -132,18 +132,33 @@ def setup_gradio_ui():
                 )
 
                 # Display table for selected folder's resource monitoring
-                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"], visible=False)
+                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)"], visible=False)
 
-                # Update the table when a folder is selected
-                def update_hardware_table(folder_name):
+                # Add components to display the CPU and GPU resource plots
+                cpu_plot = gr.Image(type="filepath")
+                gpu_plot = gr.Image(type="filepath")
+
+                # Update the table and plots when a folder is selected
+                def update_hardware_table_and_plots(folder_name):
+                    # Read the resource data and generate the plots
                     resource_df = read_resource_data(folder_name)
-                    return gr.update(value=resource_df, visible=True)
+                    plot_paths = plot_hardware_resource_consumption(os.path.join('results', folder_name, 'hardware_resources.ncol'))
+                    
+                    # Return updated table and plot paths
+                    return (
+                        gr.update(value=resource_df, visible=True),
+                        plot_paths['CPU'],
+                        plot_paths['GPU']
+                    )
 
+                # Set up the listener to update table and plots on folder selection
                 folder_list_hardware.change(
-                    fn=update_hardware_table, 
+                    fn=update_hardware_table_and_plots, 
                     inputs=folder_list_hardware, 
-                    outputs=resource_table
+                    outputs=[resource_table, cpu_plot, gpu_plot]
                 )
+
+
 
             with gr.TabItem("Performance Monitoring"):
                 gr.Markdown("### Performance Monitoring")
