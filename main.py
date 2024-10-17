@@ -13,6 +13,9 @@ def setup_gradio_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## Federated Learning Simulation UI")
         
+        # Create a refresh button
+        refresh_button = gr.Button("Refresh Folders", variant="secondary", elem_id="refresh-btn", interactive=True)
+
         # Create tabs for variables, monitoring, and info
         with gr.Tabs():
             with gr.TabItem("Variables"):
@@ -145,7 +148,7 @@ def setup_gradio_ui():
             with gr.TabItem("Performance Monitoring"):
                 gr.Markdown("### Performance Monitoring")
 
-                folder_list = gr.Dropdown(
+                folder_list_performance = gr.Dropdown(
                     choices=get_results_folders(),
                     label="Select Results Folder",
                     interactive=True
@@ -168,9 +171,9 @@ def setup_gradio_ui():
                 plot_output = gr.Image(type="filepath")  # Use "filepath" for the image file
 
                 # Set up the change listener to update tables and plot
-                folder_list.change(
+                folder_list_performance.change(
                     fn=update_performance,
-                    inputs=folder_list,
+                    inputs=folder_list_performance,
                     outputs=[resource_table, evaluation_table, plot_output]
                 )
 
@@ -178,7 +181,20 @@ def setup_gradio_ui():
                 gr.Markdown("### Hardware Information")
                 hardware_info = gr.Textbox(value=get_hardware_info(), label="System Hardware Information", lines=5)
 
+        # Refresh button action to update folder dropdowns
+        def refresh_folder_lists():
+            new_choices = get_results_folders()
+            return gr.update(choices=new_choices), gr.update(choices=new_choices)
+
+        # Set refresh button to trigger the folder update in both dropdowns
+        refresh_button.click(
+            fn=refresh_folder_lists, 
+            inputs=[], 
+            outputs=[folder_list_hardware, folder_list_performance]
+        )
+
     return demo
+
 
 
 # Function to start the training process

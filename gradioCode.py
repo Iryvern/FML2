@@ -22,7 +22,6 @@ def read_default_values():
     else:
         return {}
 
-
 def plot_ssim_scores(file_path: str):
     """Plot the SSIM scores of each client per round and save the image to a file."""
     round_times = []
