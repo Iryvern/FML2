@@ -151,9 +151,31 @@ class FedCustom(Strategy):
         evaluate_ins = EvaluateIns(parameters, config=config)
 
         return [(client, evaluate_ins) for client in clients]
+    
+    def log_all_clients_hardware_resources(self, server_round, client_results):
+        """Log the hardware resource consumption for all clients in a single file."""
+        # Create or append to the central hardware log file
+        hardware_file_path = os.path.join(self.results_subfolder, 'hardware_resources.ncol')
+
+        with open(hardware_file_path, 'a') as file:
+            file.write(f"Round {server_round}\n")  # Write the round number
+
+            for client, res in client_results:
+                # Log CPU, GPU, memory, and network usage for each client
+                cpu_usage = psutil.cpu_percent(interval=1)
+                gpus = GPUtil.getGPUs()
+                gpu_usage = gpus[0].load * 100 if gpus else 0
+                memory_usage = psutil.virtual_memory().percent
+                net_io = psutil.net_io_counters()
+                net_sent = round(net_io.bytes_sent / (1024 ** 2), 2)  # Convert to MB
+                net_received = round(net_io.bytes_recv / (1024 ** 2), 2)  # Convert to MB
+
+                # Log the client's resource usage with their correct client ID
+                file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
+
 
     def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
-        """Aggregate evaluation results and update global metrics."""
+        """Aggregate evaluation results, log SSIM, and client hardware resource consumption."""
         if not results:
             return None, {}
 
@@ -165,32 +187,30 @@ class FedCustom(Strategy):
         total_ssim = 0.0
         total_examples = 0
 
+        # Collect SSIM scores and log resource consumption
+        self.log_all_clients_hardware_resources(server_round, results)
+
         # Collect SSIM scores
-        for i, (client, res) in enumerate(results, start=1):  # Enumerate to assign simple client IDs (1, 2, 3, ...)
+        for client, res in results:
             if 'ssim' in res.metrics:
-                ssim_scores.append((i, res.metrics['ssim']))  # Use the enumerated ID (i) instead of client.cid
-
-
+                ssim_scores.append((client.cid, res.metrics['ssim']))
             total_ssim += res.metrics['ssim'] * res.num_examples
             total_examples += res.num_examples
 
         aggregated_ssim = total_ssim / total_examples if total_examples > 0 else None
 
-        # Sort SSIM scores by client ID
+        # Sort SSIM scores by client ID and append new data to the SSIM file
         ssim_scores.sort(key=lambda x: int(x[0]))
-
-        # Append new data to the SSIM file
         with open(ssim_file_path, 'a') as file:
             file.write(f"Time: {current_time} - Round {server_round}\n")
             for cid, ssim_value in ssim_scores:
                 file.write(f"{cid} {ssim_value}\n")
 
-        # Initialize and update the learning rate scheduler
+        # Update scheduler and append evaluation results
         if self.scheduler is None:
             self.optimizer = torch.optim.Adam([torch.nn.Parameter(torch.tensor([1.0]))], lr=self.initial_lr)
             self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.step_size, gamma=self.gamma)
 
-        # Update the scheduler and append to the evaluation file
         if aggregated_ssim is not None:
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
@@ -202,6 +222,8 @@ class FedCustom(Strategy):
                     print(f"Saved aggregated SSIM value for round {server_round} in aggregated_evaluation_loss.txt")
 
         return aggregated_ssim, {}
+
+
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters

@@ -11,5 +11,5 @@ step_size=30
 gamma=0.9
 num_rounds=2
 num_cpus=1
-num_gpus=0.5
+num_gpus=0.8
 model_type=Image Anomaly Detection
