@@ -9,6 +9,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import gradio as gr
 from gradioCode import *
 
+# Define model type variable
+model_type = ""
+
 def setup_gradio_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## Federated Learning Simulation UI")
@@ -21,7 +24,7 @@ def setup_gradio_ui():
             with gr.TabItem("Variables"):
                 with gr.Row():
                     model_type_input = gr.Dropdown(
-                        choices=["Image Anomaly Detection", "Time Series Classification"],
+                        choices=["Image Anomaly Detection", "Image Classification"],
                         label="Model Type", 
                         value=default_values.get('model_type', "Image Anomaly Detection")
                     )
@@ -158,8 +161,6 @@ def setup_gradio_ui():
                     outputs=[resource_table, cpu_plot, gpu_plot]
                 )
 
-
-
             with gr.TabItem("Performance Monitoring"):
                 gr.Markdown("### Performance Monitoring")
 
@@ -169,7 +170,7 @@ def setup_gradio_ui():
                     interactive=True
                 )
 
-                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"], visible=False)
+                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)"], visible=False)
                 evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Aggregated Test SSIM"], visible=False)
 
                 # Update the tables and plot when a folder is selected
@@ -210,8 +211,6 @@ def setup_gradio_ui():
 
     return demo
 
-
-
 # Function to start the training process
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
@@ -232,21 +231,30 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     num_cpus = int(num_cpus)
     num_gpus = float(num_gpus)
 
-    # Define image transformations
-    train_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
-
-    test_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+    # Define transformations based on model type
+    if model_type == "Image Anomaly Detection":
+        train_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        test_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+    else:  # For "Image Classification" model, use a different transformation
+        train_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
 
     # Load the dataset with user-provided parameters
-    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform)
+    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type)
 
     # Set up the strategy with FedCustom
     strategy = FedCustom(

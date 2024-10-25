@@ -6,6 +6,4 @@ results/
 
 ImageDataset/
 
-TimeSeriesDataset/
-
-DataCleanup/
+cars/

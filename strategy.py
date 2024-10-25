@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder
+from models import SparseAutoencoder, YOLOv11  # Import both models
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 import os
@@ -18,6 +18,7 @@ class FedCustom(Strategy):
         initial_lr: float = 0.0005,
         step_size: int = 30,
         gamma: float = 0.9,
+        model_type: str = "autoencoder",  # New argument for model type
     ) -> None:
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
@@ -29,6 +30,7 @@ class FedCustom(Strategy):
         self.step_size = step_size
         self.gamma = gamma
         self.scheduler = None
+        self.model_type = model_type  # Store model type
 
         # Create a new subfolder within "results" using the current date and time
         self.results_subfolder = os.path.join("results", datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
@@ -82,10 +84,16 @@ class FedCustom(Strategy):
         with open(self.resource_consumption_file, 'a') as file:
             file.write(f"{server_round}, {cpu_usage}, {gpu_usage}, {memory_usage}, {net_sent}, {net_received}\n")
 
-
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
-        """Initialize global model parameters using Autoencoder."""
-        net = SparseAutoencoder()
+        """Initialize global model parameters based on the model type."""
+        # Choose model based on self.model_type
+        if self.model_type == "autoencoder":
+            net = SparseAutoencoder()
+        elif self.model_type == "yolo":
+            net = YOLOv11()
+        else:
+            raise ValueError(f"Unsupported model_type: {self.model_type}")
+
         ndarrays = get_parameters(net)
         return fl.common.ndarrays_to_parameters(ndarrays)
 
@@ -131,9 +139,13 @@ class FedCustom(Strategy):
         aggregated_parameters = self.aggregate_parameters(parameters_list)
         aggregated_parameters_fl = ndarrays_to_parameters(aggregated_parameters)
 
-        # Save the latest model's state_dict
-        net = SparseAutoencoder()
-        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters)
+        # Save the latest model's state_dict based on model type
+        if self.model_type == "autoencoder":
+            net = SparseAutoencoder()
+        elif self.model_type == "yolo":
+            net = YOLOv11()
+
+        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters, self.model_type)
         net.load_state_dict(state_dict)
         torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
 
@@ -172,7 +184,6 @@ class FedCustom(Strategy):
 
                 # Log the client's resource usage with their correct client ID
                 file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
-
 
     def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
         """Aggregate evaluation results, log SSIM, and client hardware resource consumption."""
@@ -223,8 +234,6 @@ class FedCustom(Strategy):
 
         return aggregated_ssim, {}
 
-
-
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
@@ -241,10 +250,14 @@ class FedCustom(Strategy):
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
 
-def aggregated_parameters_to_state_dict(aggregated_parameters):
-    """Convert aggregated parameters to a state dictionary."""
-    state_dict = {}
-    param_keys = list(SparseAutoencoder().state_dict().keys())
-    for key, param in zip(param_keys, aggregated_parameters):
-        state_dict[key] = torch.tensor(param)
+def aggregated_parameters_to_state_dict(aggregated_parameters, model_type):
+    """Convert aggregated parameters to a state dictionary based on model type."""
+    if model_type == "autoencoder":
+        param_keys = list(SparseAutoencoder().state_dict().keys())
+    elif model_type == "yolo":
+        param_keys = list(YOLOv11().state_dict().keys())
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
+
+    state_dict = {key: torch.tensor(param) for key, param in zip(param_keys, aggregated_parameters)}
     return state_dict

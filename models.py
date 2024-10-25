@@ -1,4 +1,4 @@
-import torch
+from ultralytics import YOLO
 import torch.nn as nn
 
 class SparseAutoencoder(nn.Module):
@@ -31,22 +31,14 @@ class SparseAutoencoder(nn.Module):
         x = x.view(x.size(0), 1, 256, 256)
         return x
 
-class GRUAnomalyDetector(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size):
-        super(GRUAnomalyDetector, self).__init__()
-        # GRU layer with specified number of layers and hidden size
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
-        
-        # Fully connected layer to map from hidden state to output
-        self.fc = nn.Linear(hidden_size, output_size)
-        
-    def forward(self, x):
-        # Initialize hidden state for the GRU
-        h0 = torch.zeros(self.gru.num_layers, x.size(0), self.gru.hidden_size).to(x.device)
-        
-        # Forward propagate the GRU
-        out, _ = self.gru(x, h0)
-        
-        # Take the last output of GRU for each sequence and pass it through the fully connected layer
-        out = self.fc(out[:, -1, :])
-        return out
+class YOLOv11(nn.Module):
+    def __init__(self, model_path: str):
+        super(YOLOv11, self).__init__()
+        # Load YOLOv11 model with the pretrained weights
+        self.model = YOLO(model_path)
+
+    def forward(self, images):
+        # Run inference
+        results = self.model(images)
+        return results
+    
