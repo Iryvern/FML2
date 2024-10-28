@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, YOLOv11
+from models import SparseAutoencoder, SimpleCNN  # Replace YOLOv11 with SimpleCNN
 
 def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="autoencoder"):
     state_dict = {}
@@ -7,8 +7,8 @@ def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="autoe
     # Choose model parameters based on model_type
     if model_type == "autoencoder":
         param_keys = list(SparseAutoencoder().state_dict().keys())
-    elif model_type == "yolo":
-        param_keys = list(YOLOv11().state_dict().keys())
+    elif model_type == "Image Classification":
+        param_keys = list(SimpleCNN().state_dict().keys())
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 

@@ -5,9 +5,9 @@ from flower_client import client_fn  # Import client_fn
 import flwr as fl  # Import Flower
 import warnings
 from torchvision import transforms
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 import gradio as gr
 from gradioCode import *
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Define model type variable
 model_type = ""
@@ -147,14 +147,12 @@ def setup_gradio_ui():
                     resource_df = read_resource_data(folder_name)
                     plot_paths = plot_hardware_resource_consumption(os.path.join('results', folder_name, 'hardware_resources.ncol'))
                     
-                    # Return updated table and plot paths
                     return (
                         gr.update(value=resource_df, visible=True),
                         plot_paths['CPU'],
                         plot_paths['GPU']
                     )
 
-                # Set up the listener to update table and plots on folder selection
                 folder_list_hardware.change(
                     fn=update_hardware_table_and_plots, 
                     inputs=folder_list_hardware, 
@@ -178,15 +176,12 @@ def setup_gradio_ui():
                     resource_df = read_resource_data(folder_name)
                     evaluation_df = read_aggregated_evaluation_data(folder_name)
                     
-                    # Get path to the plot image
                     plot_image_path = plot_ssim_scores(os.path.join('results', folder_name, 'ssim_scores.ncol'))
                     
                     return gr.update(value=resource_df, visible=True), gr.update(value=evaluation_df, visible=True), plot_image_path
 
-                # Add the graph component
-                plot_output = gr.Image(type="filepath")  # Use "filepath" for the image file
+                plot_output = gr.Image(type="filepath")
 
-                # Set up the change listener to update tables and plot
                 folder_list_performance.change(
                     fn=update_performance,
                     inputs=folder_list_performance,
@@ -202,7 +197,6 @@ def setup_gradio_ui():
             new_choices = get_results_folders()
             return gr.update(choices=new_choices), gr.update(choices=new_choices)
 
-        # Set refresh button to trigger the folder update in both dropdowns
         refresh_button.click(
             fn=refresh_folder_lists, 
             inputs=[], 
@@ -211,12 +205,10 @@ def setup_gradio_ui():
 
     return demo
 
-# Function to start the training process
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
                    initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type):
 
-    # Cast the inputs to their appropriate types
     train_test_split = float(train_test_split)
     seed = int(seed)
     num_clients = int(num_clients)
@@ -243,12 +235,14 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
-    else:  # For "Image Classification" model, use a different transformation
+    else:
         train_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
         test_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
@@ -260,13 +254,13 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     strategy = FedCustom(
         initial_lr=initial_lr, 
         step_size=step_size, 
-        gamma=gamma
+        gamma=gamma,
+        model_type=model_type
     )
 
-    # Start the Flower simulation with the adjusted client_fn logic
     try:
         fl.simulation.start_simulation(
-            client_fn=lambda cid: client_fn(cid, trainloaders),
+            client_fn=lambda cid: client_fn(cid, trainloaders, model_type),
             num_clients=num_clients, 
             config=fl.server.ServerConfig(num_rounds=num_rounds), 
             strategy=strategy, 
@@ -279,6 +273,5 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     return "Training started with the provided parameters!"
 
 if __name__ == "__main__":
-    # Launch the Gradio UI
     demo = setup_gradio_ui()
     demo.launch(share=True)

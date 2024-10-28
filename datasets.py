@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import pandas as pd
 from PIL import Image
 import os
+import torch
 
 class ChestXrayDataset(Dataset):
     def __init__(self, root_dir, transform=None):
@@ -15,9 +16,10 @@ class ChestXrayDataset(Dataset):
 
     def __getitem__(self, idx):
         img_name = self.images[idx]
-        image = Image.open(img_name).convert('L')  # Convert image to grayscale
+        image = Image.open(img_name).convert('L')  # Convert image to grayscale for anomaly detection
         if self.transform is not None:
             image = self.transform(image)
+        
         return image
 
 class SelfDrivingCarDataset(Dataset):
@@ -28,37 +30,26 @@ class SelfDrivingCarDataset(Dataset):
         # Load labels from CSV file
         self.labels_df = pd.read_csv(labels_file)
 
-        # Group labels by image filename
-        self.image_groups = self.labels_df.groupby('frame')
-        self.images = self.image_groups.groups.keys()  # Unique image names
+        # Get unique images and corresponding class labels
+        self.images = self.labels_df['frame'].unique()
+        self.labels = {row['frame']: row['class_id'] for _, row in self.labels_df.iterrows()}
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        img_name = list(self.images)[idx]
+        img_name = self.images[idx]
         img_path = os.path.join(self.images_dir, img_name)
-        image = Image.open(img_path).convert('RGB')  # Convert to RGB
+        image = Image.open(img_path).convert('RGB')  # Convert to RGB for classification
 
-        # Get all bounding boxes and class_ids for this image
-        boxes = []
-        labels = []
-        for _, row in self.image_groups.get_group(img_name).iterrows():
-            xmin, ymin, xmax, ymax = row['xmin'], row['ymin'], row['xmax'], row['ymax']
-            class_id = row['class_id']
-            boxes.append([xmin, ymin, xmax, ymax])
-            labels.append(class_id)
+        # Get class label for the current image
+        label = self.labels[img_name]
 
         if self.transform is not None:
             image = self.transform(image)
-        
-        # Package bounding boxes and labels as a dictionary
-        target = {
-            'boxes': torch.tensor(boxes, dtype=torch.float32),
-            'labels': torch.tensor(labels, dtype=torch.int64)
-        }
-        
-        return image, target
+
+        # Return the image and class label
+        return image, torch.tensor(label, dtype=torch.int64)
 
 def load_datasets(num_clients: int, dataset_path: str, train_transform, test_transform, model_type: str):
     # Determine which dataset to use based on model_type

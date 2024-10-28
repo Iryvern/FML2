@@ -1,14 +1,14 @@
 from imports import *
-from models import SparseAutoencoder, YOLOv11  # Assuming Yolo11 model is defined
+from models import SparseAutoencoder, SimpleCNN  # Replacing YOLOv11 with SimpleCNN for classification
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch
 
 # Train function
-def train(net, trainloader, epochs: int, optimizer, model_type="autoencoder"):
-    if model_type == "autoencoder":
+def train(net, trainloader, epochs: int, optimizer, model_type):
+    if model_type == "Image Anomaly Detection":
         criterion = torch.nn.MSELoss()  # Loss for image reconstruction
-    elif model_type == "yolo":
-        criterion = torch.nn.CrossEntropyLoss()  # Use CrossEntropy for classification/detection task in YOLO
+    elif model_type == "Image Classification":
+        criterion = torch.nn.CrossEntropyLoss()  # Use CrossEntropy for classification task
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
@@ -16,17 +16,18 @@ def train(net, trainloader, epochs: int, optimizer, model_type="autoencoder"):
     for epoch in range(epochs):
         total_loss = 0.0
         for batch in trainloader:
-            images, labels = batch if model_type == "yolo" else (batch, None)
+            # Adjust input and target based on model type
+            images, labels = batch if model_type == "Image Classification" else (batch, None)
             images = images.to(DEVICE)
             optimizer.zero_grad()  # Reset gradients
             outputs = net(images)
 
             # Calculate the loss based on the model type
-            if model_type == "autoencoder":
+            if model_type == "Image Anomaly Detection":
                 loss = criterion(outputs, images)  # Autoencoder reconstruction loss
-            elif model_type == "yolo":
+            elif model_type == "Image Classification":
                 labels = labels.to(DEVICE)
-                loss = criterion(outputs, labels)  # YOLO object detection loss
+                loss = criterion(outputs, labels)  # SimpleCNN classification loss
 
             loss.backward()  # Backpropagation
             optimizer.step()  # Update the weights
@@ -36,11 +37,11 @@ def train(net, trainloader, epochs: int, optimizer, model_type="autoencoder"):
         print(f"Epoch {epoch+1}: train loss {average_loss:.4f}")
 
 # Test function
-def test(net, testloader, model_type="autoencoder"):
-    if model_type == "autoencoder":
+def test(net, testloader, model_type):
+    if model_type == "Image Anomaly Detection":
         criterion = torch.nn.MSELoss()  # Loss for image reconstruction
-    elif model_type == "yolo":
-        criterion = torch.nn.CrossEntropyLoss()  # Use CrossEntropy for classification/detection task in YOLO
+    elif model_type == "Image Classification":
+        criterion = torch.nn.CrossEntropyLoss()  # Use CrossEntropy for classification task
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
@@ -49,16 +50,17 @@ def test(net, testloader, model_type="autoencoder"):
     net.eval()
     with torch.no_grad():
         for batch in testloader:
-            images, labels = batch if model_type == "yolo" else (batch, None)
+            # Adjust input and target based on model type
+            images, labels = batch if model_type == "Image Classification" else (batch, None)
             images = images.to(DEVICE)
             outputs = net(images)
 
             # Calculate the loss based on the model type
-            if model_type == "autoencoder":
+            if model_type == "Image Anomaly Detection":
                 loss = criterion(outputs, images)  # Autoencoder reconstruction loss
-            elif model_type == "yolo":
+            elif model_type == "Image Classification":
                 labels = labels.to(DEVICE)
-                loss = criterion(outputs, labels)  # YOLO object detection loss
+                loss = criterion(outputs, labels)  # SimpleCNN classification loss
 
             total_loss += loss.item()
 

@@ -1,4 +1,4 @@
-from ultralytics import YOLO
+import torch
 import torch.nn as nn
 
 class SparseAutoencoder(nn.Module):
@@ -31,14 +31,46 @@ class SparseAutoencoder(nn.Module):
         x = x.view(x.size(0), 1, 256, 256)
         return x
 
-class YOLOv11(nn.Module):
-    def __init__(self, model_path: str):
-        super(YOLOv11, self).__init__()
-        # Load YOLOv11 model with the pretrained weights
-        self.model = YOLO(model_path)
+class SimpleCNN(nn.Module):
+    def __init__(self, num_classes: int = 10):
+        super(SimpleCNN, self).__init__()
+        self.features = nn.Sequential(
+            # First convolutional block
+            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),  # Down-sample by a factor of 2
 
-    def forward(self, images):
-        # Run inference
-        results = self.model(images)
-        return results
-    
+            # Second convolutional block
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),  # Down-sample by a factor of 2
+
+            # Third convolutional block
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),  # Down-sample by a factor of 2
+
+            # Fourth convolutional block
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2)  # Down-sample by a factor of 2
+        )
+
+        # Calculate the flattened size based on the downsampling structure
+        self.flattened_size = 256 * (256 // (2**4)) * (256 // (2**4))  # 256 * 16 * 16 = 65536
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(self.flattened_size, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)  # Apply the feature extractor (convolutions)
+        x = x.view(x.size(0), -1)  # Flatten for the classifier
+        x = self.classifier(x)
+        return x
