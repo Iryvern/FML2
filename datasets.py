@@ -20,7 +20,6 @@ class ChestXrayDataset(Dataset):
             image = self.transform(image)
         return image
 
-
 class SelfDrivingCarDataset(Dataset):
     def __init__(self, images_dir, labels_file, transform=None):
         self.images_dir = images_dir
@@ -28,24 +27,38 @@ class SelfDrivingCarDataset(Dataset):
 
         # Load labels from CSV file
         self.labels_df = pd.read_csv(labels_file)
-        self.images = self.labels_df['filename'].tolist()  # Assuming 'filename' column has image names
+
+        # Group labels by image filename
+        self.image_groups = self.labels_df.groupby('frame')
+        self.images = self.image_groups.groups.keys()  # Unique image names
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        img_name = self.images[idx]
+        img_name = list(self.images)[idx]
         img_path = os.path.join(self.images_dir, img_name)
         image = Image.open(img_path).convert('RGB')  # Convert to RGB
 
-        # Assuming labels include columns like 'speed', 'steering_angle', 'acceleration', etc.
-        label = self.labels_df.iloc[idx].to_dict()  # Convert the row to a dictionary for easier handling
+        # Get all bounding boxes and class_ids for this image
+        boxes = []
+        labels = []
+        for _, row in self.image_groups.get_group(img_name).iterrows():
+            xmin, ymin, xmax, ymax = row['xmin'], row['ymin'], row['xmax'], row['ymax']
+            class_id = row['class_id']
+            boxes.append([xmin, ymin, xmax, ymax])
+            labels.append(class_id)
 
         if self.transform is not None:
             image = self.transform(image)
         
-        return image, label
-
+        # Package bounding boxes and labels as a dictionary
+        target = {
+            'boxes': torch.tensor(boxes, dtype=torch.float32),
+            'labels': torch.tensor(labels, dtype=torch.int64)
+        }
+        
+        return image, target
 
 def load_datasets(num_clients: int, dataset_path: str, train_transform, test_transform, model_type: str):
     # Determine which dataset to use based on model_type
