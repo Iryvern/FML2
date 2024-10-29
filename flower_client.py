@@ -1,6 +1,6 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  # Replace YOLOv11 with SimpleCNN
-from training import train  # Only import the train function from training.py
+from models import SparseAutoencoder, SimpleCNN  # Import SimpleCNN instead of YOLOv11
+from training import train  # Import the train function from training.py
 import flwr as fl
 import torch
 import numpy as np
@@ -13,9 +13,7 @@ import torch.optim as optim
 def set_parameters(net, parameters: list[np.ndarray], model_type: str):
     params_dict = zip(net.state_dict().keys(), parameters)
     state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-    
     net.load_state_dict(state_dict, strict=True)
-
 
 # Get parameters from the model as a list of NumPy arrays
 def get_parameters(net) -> list[np.ndarray]:
@@ -56,43 +54,48 @@ class FlowerClient(fl.client.Client):
         ndarrays = parameters_to_ndarrays(ins.parameters)
         set_parameters(self.net, ndarrays, model_type=self.model_type)
 
-        # Perform reconstruction and calculate SSIM using trainloader
-        total_ssim = 0.0
-        total_items = 0
         self.net.eval()
+        total_metric = 0.0
+        total_items = 0
         with torch.no_grad():
             for batch in self.trainloader:
-                images, labels = batch if self.model_type == "Image Classification" else (batch, None)
-                images = images.to(DEVICE)
-                outputs = self.net(images)
-                
-                if self.model_type == "Image Anomaly Detection":
+                if self.model_type == "Image Classification":
+                    images, labels = batch
+                    images, labels = images.to(DEVICE), labels.to(DEVICE)
+                    outputs = self.net(images)
+                    _, preds = torch.max(outputs, 1)
+                    correct = (preds == labels).sum().item()
+                    total_metric += correct
+                    total_items += images.size(0)
+                elif self.model_type == "Image Anomaly Detection":
+                    images = batch.to(DEVICE)
+                    outputs = self.net(images)
                     images_np = images.cpu().numpy().transpose(0, 2, 3, 1)
                     outputs_np = outputs.cpu().numpy().transpose(0, 2, 3, 1)
-                    
                     for img, out in zip(images_np, outputs_np):
                         img_gray = TF.to_pil_image(img).convert("L")
                         out_gray = TF.to_pil_image(out).convert("L")
                         img_gray = np.array(img_gray)
                         out_gray = np.array(out_gray)
                         ssim_value = ssim(img_gray, out_gray, data_range=img_gray.max() - img_gray.min())
-                        total_ssim += ssim_value
-                    total_items += images.size(0)
-                else:
-                    # For classification, calculate the classification loss instead of SSIM
-                    labels = labels.to(DEVICE)
-                    criterion = torch.nn.CrossEntropyLoss()
-                    loss = criterion(outputs, labels)
-                    total_ssim += loss.item()
+                        total_metric += ssim_value
                     total_items += images.size(0)
 
-        average_metric = total_ssim / total_items if total_items > 0 else 0
+        # Calculate the average metric
+        if self.model_type == "Image Classification":
+            average_metric = total_metric / total_items if total_items > 0 else 0  # Accuracy
+        elif self.model_type == "Image Anomaly Detection":
+            average_metric = total_metric / total_items if total_items > 0 else 0  # Average SSIM
+
+        # Define the metric key and loss based on model type
+        metric_key = "accuracy" if self.model_type == "Image Classification" else "ssim"
+        loss = 1 - average_metric if self.model_type == "Image Anomaly Detection" else (1 - average_metric)  # Accuracy as 1 - accuracy for Flower compatibility
 
         return fl.common.EvaluateRes(
             status=fl.common.Status(code=fl.common.Code.OK, message="Evaluation completed"),
-            loss=1 - average_metric if self.model_type == "Image Anomaly Detection" else average_metric,
+            loss=loss,
             num_examples=total_items,
-            metrics={"ssim" if self.model_type == "Image Anomaly Detection" else "classification_loss": average_metric}
+            metrics={metric_key: average_metric}
         )
 
 # Flower client function

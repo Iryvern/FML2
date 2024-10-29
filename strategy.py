@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  # Replace YOLOv11 with SimpleCNN
+from models import SparseAutoencoder, SimpleCNN  
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 import os
@@ -32,8 +32,8 @@ class FedCustom(Strategy):
         self.scheduler = None
         self.model_type = model_type
 
-        # Create a new subfolder within "results" using the current date and time
-        self.results_subfolder = os.path.join("results", datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+        # Create a new subfolder within "results" using model type, date, and time
+        self.results_subfolder = os.path.join("results", f"{self.model_type}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
         os.makedirs(self.results_subfolder, exist_ok=True)
 
         # Initialize the resource consumption log file
@@ -169,49 +169,54 @@ class FedCustom(Strategy):
                 file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
 
     def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
-        """Aggregate evaluation results, log SSIM, and client hardware resource consumption."""
+        """Aggregate evaluation results and log SSIM or Accuracy based on model type."""
         if not results:
             return None, {}
 
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ssim_file_path = os.path.join(self.results_subfolder, 'ssim_scores.ncol')
+        metric_file_name = 'accuracy_scores.ncol' if self.model_type == "Image Classification" else 'ssim_scores.ncol'
+        metric_file_path = os.path.join(self.results_subfolder, metric_file_name)
         evaluation_file_path = os.path.join(self.results_subfolder, 'aggregated_evaluation_loss.txt')
 
-        ssim_scores = []
-        total_ssim = 0.0
+        metric_scores = []
+        total_metric = 0.0
         total_examples = 0
 
         self.log_all_clients_hardware_resources(server_round, results)
 
         for client, res in results:
-            if 'ssim' in res.metrics:
-                ssim_scores.append((client.cid, res.metrics['ssim']))
-            total_ssim += res.metrics['ssim'] * res.num_examples
+            if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
+                metric_scores.append((client.cid, res.metrics['accuracy']))
+                total_metric += res.metrics['accuracy'] * res.num_examples
+            elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
+                metric_scores.append((client.cid, res.metrics['ssim']))
+                total_metric += res.metrics['ssim'] * res.num_examples
             total_examples += res.num_examples
 
-        aggregated_ssim = total_ssim / total_examples if total_examples > 0 else None
+        aggregated_metric = total_metric / total_examples if total_examples > 0 else None
 
-        ssim_scores.sort(key=lambda x: int(x[0]))
-        with open(ssim_file_path, 'a') as file:
+        metric_scores.sort(key=lambda x: int(x[0]))
+        with open(metric_file_path, 'a') as file:
             file.write(f"Time: {current_time} - Round {server_round}\n")
-            for cid, ssim_value in ssim_scores:
-                file.write(f"{cid} {ssim_value}\n")
+            for cid, metric_value in metric_scores:
+                file.write(f"{cid} {metric_value}\n")
 
         if self.scheduler is None:
             self.optimizer = torch.optim.Adam([torch.nn.Parameter(torch.tensor([1.0]))], lr=self.initial_lr)
             self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.step_size, gamma=self.gamma)
 
-        if aggregated_ssim is not None:
+        if aggregated_metric is not None:
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
 
             with open(evaluation_file_path, 'a') as file:
                 file.write(f"Time: {current_time} - Round {server_round} - LR {current_lr}\n")
-                if aggregated_ssim is not None:
-                    file.write(f"Aggregated Test SSIM: {aggregated_ssim:.4f}\n")
-                    print(f"Saved aggregated SSIM value for round {server_round} in aggregated_evaluation_loss.txt")
+                if aggregated_metric is not None:
+                    metric_label = "Aggregated Test Accuracy" if self.model_type == "Image Classification" else "Aggregated Test SSIM"
+                    file.write(f"{metric_label}: {aggregated_metric:.4f}\n")
+                    print(f"Saved {metric_label} for round {server_round} in aggregated_evaluation_loss.txt")
 
-        return aggregated_ssim, {}
+        return aggregated_metric, {}
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters

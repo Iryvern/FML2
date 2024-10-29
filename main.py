@@ -1,25 +1,22 @@
 import os
-from datasets import load_datasets  # Import load_datasets function
-from strategy import FedCustom  # Import FedCustom strategy
-from flower_client import client_fn  # Import client_fn
-import flwr as fl  # Import Flower
+from datasets import load_datasets
+from strategy import FedCustom
+from flower_client import client_fn
+import flwr as fl
 import warnings
 from torchvision import transforms
 import gradio as gr
 from gradioCode import *
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Define model type variable
 model_type = ""
 
 def setup_gradio_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## Federated Learning Simulation UI")
-        
-        # Create a refresh button
+
         refresh_button = gr.Button("Refresh Folders", variant="secondary", elem_id="refresh-btn", interactive=True)
 
-        # Create tabs for variables, monitoring, and info
         with gr.Tabs():
             with gr.TabItem("Variables"):
                 with gr.Row():
@@ -33,7 +30,6 @@ def setup_gradio_ui():
                 
                 output_text = gr.Textbox(label="Output")
 
-                # Input fields in 3 columns with default values from Default.txt
                 with gr.Row():
                     with gr.Column():
                         dataset_folder_input = gr.Textbox(
@@ -97,7 +93,6 @@ def setup_gradio_ui():
                             value=default_values.get('num_gpus', "0.1")
                         )
 
-                # Save button action to save current input values to Default.txt
                 save_button.click(
                     save_default_values, 
                     inputs=[
@@ -109,7 +104,6 @@ def setup_gradio_ui():
                     outputs=output_text
                 )
 
-                # Start button action
                 start_button.click(
                     start_training, 
                     inputs=[
@@ -123,8 +117,7 @@ def setup_gradio_ui():
 
             with gr.TabItem("Hardware Monitoring"):
                 gr.Markdown("### Hardware Resource Monitoring")
-                
-                # List the folders in "results"
+
                 def get_results_folders():
                     return [folder for folder in os.listdir('results') if os.path.isdir(os.path.join('results', folder))]
 
@@ -134,16 +127,11 @@ def setup_gradio_ui():
                     interactive=True
                 )
 
-                # Display table for selected folder's resource monitoring
                 resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)"], visible=False)
-
-                # Add components to display the CPU and GPU resource plots
                 cpu_plot = gr.Image(type="filepath")
                 gpu_plot = gr.Image(type="filepath")
 
-                # Update the table and plots when a folder is selected
                 def update_hardware_table_and_plots(folder_name):
-                    # Read the resource data and generate the plots
                     resource_df = read_resource_data(folder_name)
                     plot_paths = plot_hardware_resource_consumption(os.path.join('results', folder_name, 'hardware_resources.ncol'))
                     
@@ -167,32 +155,27 @@ def setup_gradio_ui():
                     label="Select Results Folder",
                     interactive=True
                 )
+                
+                evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Metric"], visible=False)
 
-                resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)"], visible=False)
-                evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Aggregated Test SSIM"], visible=False)
-
-                # Update the tables and plot when a folder is selected
                 def update_performance(folder_name):
-                    resource_df = read_resource_data(folder_name)
                     evaluation_df = read_aggregated_evaluation_data(folder_name)
+                    plot_image_path = plot_metric_scores(folder_name)
                     
-                    plot_image_path = plot_ssim_scores(os.path.join('results', folder_name, 'ssim_scores.ncol'))
-                    
-                    return gr.update(value=resource_df, visible=True), gr.update(value=evaluation_df, visible=True), plot_image_path
+                    return gr.update(value=evaluation_df, visible=True), plot_image_path
 
                 plot_output = gr.Image(type="filepath")
 
                 folder_list_performance.change(
                     fn=update_performance,
                     inputs=folder_list_performance,
-                    outputs=[resource_table, evaluation_table, plot_output]
+                    outputs=[evaluation_table, plot_output]
                 )
 
             with gr.TabItem("Info"):
                 gr.Markdown("### Hardware Information")
                 hardware_info = gr.Textbox(value=get_hardware_info(), label="System Hardware Information", lines=5)
 
-        # Refresh button action to update folder dropdowns
         def refresh_folder_lists():
             new_choices = get_results_folders()
             return gr.update(choices=new_choices), gr.update(choices=new_choices)
@@ -204,6 +187,7 @@ def setup_gradio_ui():
         )
 
     return demo
+
 
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
@@ -223,34 +207,19 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     num_cpus = int(num_cpus)
     num_gpus = float(num_gpus)
 
-    # Define transformations based on model type
-    if model_type == "Image Anomaly Detection":
-        train_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-        test_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-    else:
-        train_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-        test_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
+    train_transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+    test_transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
 
-    # Load the dataset with user-provided parameters
     trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type)
 
-    # Set up the strategy with FedCustom
     strategy = FedCustom(
         initial_lr=initial_lr, 
         step_size=step_size, 
