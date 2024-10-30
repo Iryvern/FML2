@@ -1,11 +1,11 @@
 from imports import *
 from models import SparseAutoencoder, SimpleCNN  # Replace YOLOv11 with SimpleCNN
 
-def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="autoencoder"):
+def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="Image Classification"):
     state_dict = {}
 
     # Choose model parameters based on model_type
-    if model_type == "autoencoder":
+    if model_type == "Image Anomaly Detection":
         param_keys = list(SparseAutoencoder().state_dict().keys())
     elif model_type == "Image Classification":
         param_keys = list(SimpleCNN().state_dict().keys())

@@ -156,7 +156,7 @@ class FedCustom(Strategy):
 
         with open(hardware_file_path, 'a') as file:
             file.write(f"Round {server_round}\n")
-
+           
             for client, res in client_results:
                 cpu_usage = psutil.cpu_percent(interval=1)
                 gpus = GPUtil.getGPUs()
@@ -165,7 +165,6 @@ class FedCustom(Strategy):
                 net_io = psutil.net_io_counters()
                 net_sent = round(net_io.bytes_sent / (1024 ** 2), 2)
                 net_received = round(net_io.bytes_recv / (1024 ** 2), 2)
-
                 file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
 
     def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
