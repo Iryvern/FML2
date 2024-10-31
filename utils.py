@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  # Replace YOLOv11 with SimpleCNN
+from models import SparseAutoencoder, SimpleCNN 
 
 def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="Image Classification"):
     state_dict = {}
