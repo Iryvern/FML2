@@ -15,8 +15,6 @@ def setup_gradio_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## Federated Learning Simulation UI")
 
-        refresh_button = gr.Button("Refresh Folders", variant="secondary", elem_id="refresh-btn", interactive=True)
-
         with gr.Tabs():
             with gr.TabItem("Variables"):
                 with gr.Row():
@@ -27,7 +25,7 @@ def setup_gradio_ui():
                     )
                     start_button = gr.Button("Start Simulation")
                     save_button = gr.Button("Save changes")
-                
+
                 output_text = gr.Textbox(label="Output")
 
                 with gr.Row():
@@ -126,6 +124,8 @@ def setup_gradio_ui():
                     label="Select Results Folder",
                     interactive=True
                 )
+                
+                refresh_button_hardware = gr.Button("Refresh Folders", variant="secondary", interactive=True)
 
                 resource_table = gr.DataFrame(headers=["Round", "CPU Usage (%)", "GPU Usage (%)"], visible=False)
                 cpu_plot = gr.Image(type="filepath")
@@ -146,6 +146,13 @@ def setup_gradio_ui():
                     inputs=folder_list_hardware, 
                     outputs=[resource_table, cpu_plot, gpu_plot]
                 )
+                
+                # Connect refresh_button in "Hardware Monitoring" tab
+                refresh_button_hardware.click(
+                    fn=lambda: gr.update(choices=get_results_folders()),
+                    inputs=[],
+                    outputs=folder_list_hardware
+                )
 
             with gr.TabItem("Performance Monitoring"):
                 gr.Markdown("### Performance Monitoring")
@@ -156,6 +163,8 @@ def setup_gradio_ui():
                     interactive=True
                 )
                 
+                refresh_button_performance = gr.Button("Refresh Folders", variant="secondary", interactive=True)
+
                 evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Metric"], visible=False)
 
                 def update_performance(folder_name):
@@ -172,19 +181,16 @@ def setup_gradio_ui():
                     outputs=[evaluation_table, plot_output]
                 )
 
+                # Connect refresh_button in "Performance Monitoring" tab
+                refresh_button_performance.click(
+                    fn=lambda: gr.update(choices=get_results_folders()),
+                    inputs=[],
+                    outputs=folder_list_performance
+                )
+
             with gr.TabItem("Info"):
                 gr.Markdown("### Hardware Information")
                 hardware_info = gr.Textbox(value=get_hardware_info(), label="System Hardware Information", lines=5)
-
-        def refresh_folder_lists():
-            new_choices = get_results_folders()
-            return gr.update(choices=new_choices), gr.update(choices=new_choices)
-
-        refresh_button.click(
-            fn=refresh_folder_lists, 
-            inputs=[], 
-            outputs=[folder_list_hardware, folder_list_performance]
-        )
 
     return demo
 

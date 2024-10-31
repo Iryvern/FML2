@@ -1,4 +1,4 @@
-dataset_folder=D:\Projects\FML2\ImageDataset
+dataset_folder=D:\Projects\FML2\cars
 train_test_split=0.8
 seed=42
 num_clients=2
@@ -9,7 +9,7 @@ epochs_per_round=5
 initial_lr=0.001
 step_size=30
 gamma=0.9
-num_rounds=3
+num_rounds=1
 num_cpus=1
 num_gpus=0.8
-model_type=Image Anomaly Detection
+model_type=Image Classification
