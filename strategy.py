@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  
+from models import SparseAutoencoder, SimpleCNN
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 import os
@@ -40,43 +40,29 @@ class FedCustom(Strategy):
         self.resource_consumption_file = os.path.join(self.results_subfolder, "resource_consumption.txt")
         self.initialize_resource_log()
 
-        # Log initial resource consumption as Round 0
-        self.log_initial_resource_consumption()
-
     def initialize_resource_log(self):
         """Initialize the resource consumption log file with column headers."""
         cpu_count = psutil.cpu_count(logical=True)
-        total_memory = round(psutil.virtual_memory().total / (1024 ** 3), 2)  # in GB
+        total_memory = round(psutil.virtual_memory().total / (1024 ** 3), 3)  # in GB
         gpus = GPUtil.getGPUs()
         gpu_name = gpus[0].name if gpus else "N/A"
-        total_gpu_memory = round(gpus[0].memoryTotal, 2) if gpus else "N/A"  # in MB
+        total_gpu_memory = round(gpus[0].memoryTotal, 3) if gpus else "N/A"  # in MB
 
         with open(self.resource_consumption_file, 'w') as file:
             file.write(f"Resource Consumption Log\n")
             file.write(f"CPU (Cores: {cpu_count}), GPU (Model: {gpu_name}, Memory: {total_gpu_memory} MB), Memory (Total: {total_memory} GB), Network (Bytes Sent/Received)\n")
-            file.write("Round, CPU Usage (%), GPU Usage (%), Memory Usage (%), Network Sent (MB), Network Received (MB)\n")
+            file.write("Round, Aggregated CPU Usage (%), Aggregated GPU Usage (%), Avg Memory Usage (%), Avg Network Sent (MB), Avg Network Received (MB)\n")
 
-    def log_initial_resource_consumption(self):
-        """Log the resource consumption at the start of the simulation as Round 0."""
-        print("Logging initial resource consumption for Round 0")
-        self.log_resource_consumption(0)
-
-    def log_resource_consumption(self, server_round):
-        """Log the resource consumption to the file."""
-        cpu_usage = psutil.cpu_percent(interval=1)
-        
-        gpus = GPUtil.getGPUs()
-        gpu_usage = gpus[0].load * 100 if gpus else 0
-        
-        memory_info = psutil.virtual_memory()
-        memory_usage = memory_info.percent
-        
-        net_io = psutil.net_io_counters()
-        net_sent = round(net_io.bytes_sent / (1024 ** 2), 2)  # Convert to MB
-        net_received = round(net_io.bytes_recv / (1024 ** 2), 2)  # Convert to MB
+    def log_resource_consumption(self, server_round, client_metrics):
+        """Aggregate and log client resource consumption for the round."""
+        total_cpu = sum(metric["cpu"] for metric in client_metrics)
+        total_gpu = sum(metric["gpu"] for metric in client_metrics)
+        avg_memory = round(sum(metric["memory"] for metric in client_metrics) / len(client_metrics), 3)
+        avg_net_sent = round(sum(metric["net_sent"] for metric in client_metrics) / len(client_metrics), 3)
+        avg_net_received = round(sum(metric["net_received"] for metric in client_metrics) / len(client_metrics), 3)
 
         with open(self.resource_consumption_file, 'a') as file:
-            file.write(f"{server_round}, {cpu_usage}, {gpu_usage}, {memory_usage}, {net_sent}, {net_received}\n")
+            file.write(f"{server_round}, {round(total_cpu, 3)}, {round(total_gpu, 3)}, {avg_memory}, {avg_net_sent}, {avg_net_received}\n")
 
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
         """Initialize global model parameters based on the model type."""
@@ -120,8 +106,6 @@ class FedCustom(Strategy):
         if not results:
             return None, {}
 
-        self.log_resource_consumption(server_round)
-
         parameters_list = [parameters_to_ndarrays(res.parameters) for client, res in results]
         aggregated_parameters = self.aggregate_parameters(parameters_list)
         aggregated_parameters_fl = ndarrays_to_parameters(aggregated_parameters)
@@ -151,21 +135,33 @@ class FedCustom(Strategy):
         return [(client, evaluate_ins) for client in clients]
     
     def log_all_clients_hardware_resources(self, server_round, client_results):
-        """Log the hardware resource consumption for all clients in a single file."""
+        """Log each client's hardware usage in hardware_resources.ncol and aggregate CPU/GPU for resource_consumption.txt."""
         hardware_file_path = os.path.join(self.results_subfolder, 'hardware_resources.ncol')
+        client_metrics = []
 
         with open(hardware_file_path, 'a') as file:
             file.write(f"Round {server_round}\n")
-           
             for client, res in client_results:
-                cpu_usage = psutil.cpu_percent(interval=1)
+                cpu_usage = round(psutil.cpu_percent(interval=1), 3)
                 gpus = GPUtil.getGPUs()
-                gpu_usage = gpus[0].load * 100 if gpus else 0
-                memory_usage = psutil.virtual_memory().percent
+                gpu_usage = round(gpus[0].load * 100, 3) if gpus else 0
+                memory_usage = round(psutil.virtual_memory().percent, 3)
                 net_io = psutil.net_io_counters()
-                net_sent = round(net_io.bytes_sent / (1024 ** 2), 2)
-                net_received = round(net_io.bytes_recv / (1024 ** 2), 2)
+                net_sent = round(net_io.bytes_sent / (1024 ** 2), 3)
+                net_received = round(net_io.bytes_recv / (1024 ** 2), 3)
+
+                client_metrics.append({
+                    "cpu": cpu_usage,
+                    "gpu": gpu_usage,
+                    "memory": memory_usage,
+                    "net_sent": net_sent,
+                    "net_received": net_received
+                })
+
                 file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
+
+        # After logging each client's data, log the aggregated metrics
+        self.log_resource_consumption(server_round, client_metrics)
 
     def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
         """Aggregate evaluation results and log SSIM or Accuracy based on model type."""

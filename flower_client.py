@@ -1,6 +1,6 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  # Import SimpleCNN instead of YOLOv11
-from training import train  # Import the train function from training.py
+from models import SparseAutoencoder, SimpleCNN  
+from training import train
 import flwr as fl
 import torch
 import numpy as np
@@ -8,6 +8,8 @@ from collections import OrderedDict
 from skimage.metrics import structural_similarity as ssim
 import torchvision.transforms.functional as TF
 import torch.optim as optim
+import psutil  # To capture CPU, memory, and network stats
+import GPUtil  # To capture GPU stats
 
 # Set parameters for the model from a list of NumPy arrays
 def set_parameters(net, parameters: list[np.ndarray], model_type: str):
@@ -42,11 +44,15 @@ class FlowerClient(fl.client.Client):
         train(self.net, self.trainloader, epochs=self.epochs_per_round, optimizer=self.optimizer, model_type=self.model_type)
         updated_ndarrays = get_parameters(self.net)
         updated_parameters = ndarrays_to_parameters(updated_ndarrays)
+
+        # Capture hardware metrics during training
+        client_resources = self._get_hardware_metrics()
+        
         return fl.common.FitRes(
             status=fl.common.Status(code=fl.common.Code.OK, message="Model trained"),
             parameters=updated_parameters,
             num_examples=len(self.trainloader),
-            metrics={}
+            metrics=client_resources  # Send the hardware metrics as part of metrics
         )
 
     def evaluate(self, ins: fl.common.EvaluateIns) -> fl.common.EvaluateRes:
@@ -89,14 +95,43 @@ class FlowerClient(fl.client.Client):
 
         # Define the metric key and loss based on model type
         metric_key = "accuracy" if self.model_type == "Image Classification" else "ssim"
-        loss = 1 - average_metric if self.model_type == "Image Anomaly Detection" else (1 - average_metric)  # Accuracy as 1 - accuracy for Flower compatibility
+        loss = 1 - average_metric if self.model_type == "Image Anomaly Detection" else (1 - average_metric)
+
+        # Capture hardware metrics during evaluation
+        client_resources = self._get_hardware_metrics()
 
         return fl.common.EvaluateRes(
             status=fl.common.Status(code=fl.common.Code.OK, message="Evaluation completed"),
             loss=loss,
             num_examples=total_items,
-            metrics={metric_key: average_metric}
+            metrics={metric_key: average_metric, **client_resources}
         )
+
+    def _get_hardware_metrics(self):
+        """Collect hardware metrics on the client's machine."""
+        # Capture CPU usage
+        cpu_usage = psutil.cpu_percent(interval=1)
+
+        # Capture GPU usage
+        gpus = GPUtil.getGPUs()
+        gpu_usage = gpus[0].load * 100 if gpus else 0
+
+        # Capture Memory usage
+        memory_info = psutil.virtual_memory()
+        memory_usage = memory_info.percent
+
+        # Capture Network usage
+        net_io = psutil.net_io_counters()
+        net_sent = round(net_io.bytes_sent / (1024 ** 2), 2)  # Convert to MB
+        net_received = round(net_io.bytes_recv / (1024 ** 2), 2)  # Convert to MB
+
+        return {
+            "cpu_usage": cpu_usage,
+            "gpu_usage": gpu_usage,
+            "memory_usage": memory_usage,
+            "network_sent": net_sent,
+            "network_received": net_received,
+        }
 
 # Flower client function
 def client_fn(cid, trainloaders, model_type) -> FlowerClient:
@@ -104,7 +139,7 @@ def client_fn(cid, trainloaders, model_type) -> FlowerClient:
     if model_type == "Image Anomaly Detection":
         net = SparseAutoencoder().to(DEVICE)
     elif model_type == "Image Classification":
-        net = SimpleCNN().to(DEVICE)  # Initialize SimpleCNN model
+        net = SimpleCNN().to(DEVICE)
 
     trainloader = trainloaders[int(cid)]
     optimizer = optim.Adam(net.parameters(), lr=0.001)
