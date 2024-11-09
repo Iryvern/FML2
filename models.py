@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
+from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
 
 class SparseAutoencoder(nn.Module):
     def __init__(self):
         super(SparseAutoencoder, self).__init__()
-        # Adjust the input size to match 256x256 images (65536 pixels)
         self.encoder = nn.Sequential(
-            nn.Linear(256 * 256, 128),  # Input size is now 65536
+            nn.Linear(256 * 256, 128),
             nn.ReLU(True),
             nn.Linear(128, 64),
             nn.ReLU(True),
@@ -18,59 +18,28 @@ class SparseAutoencoder(nn.Module):
             nn.ReLU(True),
             nn.Linear(64, 128),
             nn.ReLU(True),
-            nn.Linear(128, 256 * 256),  # Output size is now 65536
+            nn.Linear(128, 256 * 256),
             nn.Sigmoid()
         )
 
     def forward(self, x):
-        # Flatten the input images from (batch_size, 1, 256, 256) to (batch_size, 65536)
-        x = x.view(x.size(0), -1)
+        x = x.view(x.size(0), -1)  # Flatten
         x = self.encoder(x)
         x = self.decoder(x)
-        # Reshape the output back to (batch_size, 1, 256, 256)
-        x = x.view(x.size(0), 1, 256, 256)
+        x = x.view(x.size(0), 1, 256, 256)  # Reshape
         return x
 
-class SimpleCNN(nn.Module):
+class MobileNetV3(nn.Module):
     def __init__(self, num_classes: int = 10):
-        super(SimpleCNN, self).__init__()
-        self.features = nn.Sequential(
-            # First convolutional block
-            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
+        super(MobileNetV3, self).__init__()
+        # Load MobileNetV3 with pretrained weights
+        self.mobilenet = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.DEFAULT)
+        self.mobilenet.classifier = nn.Sequential(
+            nn.Linear(self.mobilenet.classifier[0].in_features, 1280),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # Down-sample by a factor of 2
-
-            # Second convolutional block
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # Down-sample by a factor of 2
-
-            # Third convolutional block
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # Down-sample by a factor of 2
-
-            # Fourth convolutional block
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)  # Down-sample by a factor of 2
-        )
-
-        # Calculate the flattened size based on the downsampling structure
-        self.flattened_size = 256 * (256 // (2**4)) * (256 // (2**4))  # 256 * 16 * 16 = 65536
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(self.flattened_size, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, num_classes)
+            nn.Dropout(0.2),
+            nn.Linear(1280, num_classes)
         )
 
     def forward(self, x):
-        x = self.features(x)  # Apply the feature extractor (convolutions)
-        x = x.view(x.size(0), -1)  # Flatten for the classifier
-        x = self.classifier(x)
-        return x
+        return self.mobilenet(x)

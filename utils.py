@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN 
+from models import SparseAutoencoder, MobileNetV3
 
 def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="Image Classification"):
     state_dict = {}
@@ -8,7 +8,7 @@ def aggregated_parameters_to_state_dict(aggregated_parameters, model_type="Image
     if model_type == "Image Anomaly Detection":
         param_keys = list(SparseAutoencoder().state_dict().keys())
     elif model_type == "Image Classification":
-        param_keys = list(SimpleCNN().state_dict().keys())
+        param_keys = list(MobileNetV3().state_dict().keys())
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 

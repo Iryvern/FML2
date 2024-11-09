@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  
+from models import SparseAutoencoder, MobileNetV3
 from training import train
 import flwr as fl
 import torch
@@ -139,7 +139,7 @@ def client_fn(cid, trainloaders, model_type) -> FlowerClient:
     if model_type == "Image Anomaly Detection":
         net = SparseAutoencoder().to(DEVICE)
     elif model_type == "Image Classification":
-        net = SimpleCNN().to(DEVICE)
+        net = MobileNetV3().to(DEVICE)
 
     trainloader = trainloaders[int(cid)]
     optimizer = optim.Adam(net.parameters(), lr=0.001)

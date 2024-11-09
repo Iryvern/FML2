@@ -1,5 +1,5 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN
+from models import SparseAutoencoder, MobileNetV3
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
 import os
@@ -69,7 +69,7 @@ class FedCustom(Strategy):
         if self.model_type == "Image Anomaly Detection":
             net = SparseAutoencoder()
         elif self.model_type == "Image Classification":
-            net = SimpleCNN()
+            net = MobileNetV3()
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
 
@@ -113,7 +113,7 @@ class FedCustom(Strategy):
         if self.model_type == "Image Anomaly Detection":
             net = SparseAutoencoder()
         elif self.model_type == "Image Classification":
-            net = SimpleCNN()
+            net = MobileNetV3()
 
         state_dict = aggregated_parameters_to_state_dict(aggregated_parameters, self.model_type)
         net.load_state_dict(state_dict)
@@ -234,7 +234,7 @@ def aggregated_parameters_to_state_dict(aggregated_parameters, model_type):
     if model_type == "Image Anomaly Detection":
         param_keys = list(SparseAutoencoder().state_dict().keys())
     elif model_type == "Image Classification":
-        param_keys = list(SimpleCNN().state_dict().keys())
+        param_keys = list(MobileNetV3().state_dict().keys())
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 

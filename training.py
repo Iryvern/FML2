@@ -1,5 +1,4 @@
 from imports import *
-from models import SparseAutoencoder, SimpleCNN  # Replacing YOLOv11 with SimpleCNN for classification
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch
 
