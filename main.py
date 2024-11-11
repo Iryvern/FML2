@@ -224,16 +224,31 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     num_cpus = int(num_cpus)
     num_gpus = float(num_gpus)
 
-    train_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
-    test_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+    if model_type == "Image Anomaly Detection":
+        train_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        test_transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+    elif model_type == "Image Classification":
+        train_transform = transforms.Compose([
+            transforms.Resize((480, 300)),  # Resize to 480x300
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize for 3 channels (RGB)
+        ])
+        test_transform = transforms.Compose([
+            transforms.Resize((480, 300)),  # Resize to 480x300
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize for 3 channels (RGB)
+        ])
+    else:
+        print("Unrecognized model type for transformation")
+
 
     trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type)
 

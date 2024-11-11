@@ -1,6 +1,7 @@
 from imports import *
 from torch.utils.data import Dataset, DataLoader, random_split
 import pandas as pd
+from utils import poison_dataset
 from PIL import Image
 import os
 import torch
@@ -52,6 +53,8 @@ class SelfDrivingCarDataset(Dataset):
         return image, torch.tensor(label, dtype=torch.int64)
 
 def load_datasets(num_clients: int, dataset_path: str, train_transform, test_transform, model_type: str):
+    from utils import poison_dataset  # Import the poison_dataset function
+
     # Determine which dataset to use based on model_type
     if model_type == "Image Anomaly Detection":
         dataset = ChestXrayDataset(root_dir=dataset_path, transform=train_transform)
@@ -65,8 +68,8 @@ def load_datasets(num_clients: int, dataset_path: str, train_transform, test_tra
     elif model_type == "Image Classification":
         images_dir = os.path.join(dataset_path, 'images')
         
-        # Use separate CSV files for train and validation
-        train_labels_file = os.path.join(dataset_path, 'labels_train.csv')
+        # Use the poison_dataset function to potentially poison the train dataset
+        train_labels_file = poison_dataset(os.path.join(dataset_path, 'labels_train.csv'))
         val_labels_file = os.path.join(dataset_path, 'labels_val.csv')
         
         trainset = SelfDrivingCarDataset(images_dir=images_dir, labels_file=train_labels_file, transform=train_transform)
