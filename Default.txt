@@ -15,3 +15,4 @@ num_gpus=0.8
 model_type=Image Classification
 num_fake_clients=0
 poison_percentage=0
+dynamic_grouping=0
