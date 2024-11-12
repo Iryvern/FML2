@@ -6,6 +6,9 @@ import os
 from datetime import datetime
 import psutil
 import GPUtil
+import h5py
+from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import cosine_similarity
 
 class FedCustom(Strategy):
     def __init__(
@@ -19,7 +22,14 @@ class FedCustom(Strategy):
         step_size: int = 30,
         gamma: float = 0.9,
         model_type: str = "Image Classification",
+        num_clusters: int = 3 
     ) -> None:
+
+        with open('Default.txt', 'r') as f:
+            config = dict(line.strip().split('=') for line in f if '=' in line)
+    
+        dynamic_grouping = float(config.get('dynamic_grouping', 0))
+        self.dynamic_grouping = dynamic_grouping
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
         self.min_fit_clients = min_fit_clients
@@ -31,6 +41,9 @@ class FedCustom(Strategy):
         self.gamma = gamma
         self.scheduler = None
         self.model_type = model_type
+        self.num_clusters = num_clusters  # Fixed number of clusters
+        self.cluster_labels = None
+        self.cluster_models = {cluster: None for cluster in range(self.num_clusters)}
 
         # Create a new subfolder within "results" using model type, date, and time
         self.results_subfolder = os.path.join("results", f"{self.model_type}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
@@ -79,7 +92,7 @@ class FedCustom(Strategy):
     def configure_fit(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[fl.server.client_proxy.ClientProxy, FitIns]]:
-        """Configure the next round of training with redistributed models."""
+        """Configure the next round of training with optional dynamic grouping."""
         num_clients = len(client_manager)
         if num_clients < self.min_fit_clients:
             return []
@@ -88,28 +101,103 @@ class FedCustom(Strategy):
         sample_size = max(sample_size, self.min_fit_clients)
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=self.min_fit_clients)
 
-        fit_configurations = [
-            (client, FitIns(parameters, {"server_round": server_round}))
-            for client in clients
-        ]
+        fit_configurations = []
+        for client in clients:
+            client_id = int(client.cid)
+            
+            # Apply dynamic grouping logic only if enabled
+            if self.dynamic_grouping == 1 and server_round > 1 and hasattr(self, 'cluster_labels') and self.cluster_labels is not None:
+                cluster = self.cluster_labels[client_id % len(self.cluster_labels)]
+                cluster_parameters = self.cluster_models[cluster]
+            else:
+                cluster_parameters = parameters
+
+            fit_configurations.append((client, FitIns(cluster_parameters, {"server_round": server_round})))
+
         return fit_configurations
 
-    def aggregate_parameters(self, parameters_list: List[List[np.ndarray]]) -> List[np.ndarray]:
-        """Aggregate model parameters by averaging them."""
-        aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
-        return aggregated_parameters
+
+    def aggregate_parameters(self, parameters_list: List[List[np.ndarray]], server_round: int) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
+        """Aggregate model parameters with optional dynamic grouping."""
+        num_models = len(parameters_list)
+        cluster_labels = None
+
+        if self.dynamic_grouping == 1:
+            if server_round == 1 or server_round % 25 == 0:
+                # Flatten the parameter arrays to create a feature vector for each model
+                flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
+
+                # Perform clustering using KMeans based on cosine similarity
+                similarity_matrix = cosine_similarity(flattened_parameters)
+                kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
+                cluster_labels = kmeans.fit_predict(similarity_matrix)
+            else:
+                # Load the cluster labels from the last clustering round if the file exists
+                if os.path.exists('cluster_assignments.h5'):
+                    with h5py.File('cluster_assignments.h5', 'r') as f:
+                        previous_rounds = [int(r) for r in f.keys() if int(r) < server_round]
+                        if previous_rounds:
+                            last_round = max(previous_rounds)
+                            cluster_labels = f[str(last_round)]['cluster_labels'][:]
+                        else:
+                            cluster_labels = np.zeros(num_models, dtype=int)
+                else:
+                    cluster_labels = np.zeros(num_models, dtype=int)
+
+            # Aggregate parameters within each cluster
+            aggregated_parameters = []
+            for cluster in range(self.num_clusters):
+                cluster_parameters = [parameters_list[i] for i in range(num_models) if cluster_labels[i] == cluster]
+                if cluster_parameters:
+                    cluster_aggregated_parameters = [np.mean(np.array(param_tuple), axis=0) for param_tuple in zip(*cluster_parameters)]
+                    aggregated_parameters.append(cluster_aggregated_parameters)
+
+            # Further aggregate the cluster centers to obtain the final parameters
+            if aggregated_parameters:
+                final_aggregated_parameters = [np.mean(np.array(param_tuple), axis=0) for param_tuple in zip(*aggregated_parameters)]
+            else:
+                final_aggregated_parameters = [np.zeros_like(param) for param in parameters_list[0]]
+
+            # Update the cluster models for the next round
+            self.cluster_models = {cluster: fl.common.ndarrays_to_parameters(params) for cluster, params in enumerate(aggregated_parameters)}
+        else:
+            # Default aggregation logic (global averaging if no dynamic grouping)
+            final_aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
+
+        return final_aggregated_parameters, cluster_labels
+
 
     def aggregate_fit(
-        self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, FitRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, FitRes], BaseException]]
-    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
-        """Aggregate client model updates and prepare the global model for redistribution."""
+        self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]], 
+        failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]]
+    ) -> Tuple[Optional[fl.common.Parameters], Dict[str, fl.common.Scalar]]:
+        """Aggregate fit results and save models for both dynamic and default grouping."""
+
         if not results:
             return None, {}
 
         parameters_list = [parameters_to_ndarrays(res.parameters) for client, res in results]
-        aggregated_parameters = self.aggregate_parameters(parameters_list)
-        aggregated_parameters_fl = ndarrays_to_parameters(aggregated_parameters)
 
+        # Dynamic grouping logic if enabled
+        if self.dynamic_grouping == 1:
+            aggregated_parameters, cluster_labels = self.aggregate_parameters(parameters_list, server_round)
+            self.cluster_labels = cluster_labels  # Store cluster_labels for use in other functions
+
+            # Save the latest model for each cluster
+            for cluster, params in self.cluster_models.items():
+                if self.model_type == "Image Anomaly Detection":
+                    net = SparseAutoencoder()
+                elif self.model_type == "Image Classification":
+                    net = MobileNetV3()
+
+                state_dict = aggregated_parameters_to_state_dict(parameters_to_ndarrays(params), self.model_type)
+                net.load_state_dict(state_dict)
+                torch.save(net.state_dict(), os.path.join(self.results_subfolder, f"latest_model_cluster_{cluster}.pth"))
+        else:
+            # Default global aggregation logic
+            aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
+
+        # Save the aggregated model (global model) regardless of grouping
         if self.model_type == "Image Anomaly Detection":
             net = SparseAutoencoder()
         elif self.model_type == "Image Classification":
@@ -119,10 +207,17 @@ class FedCustom(Strategy):
         net.load_state_dict(state_dict)
         torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
 
+        aggregated_parameters_fl = fl.common.ndarrays_to_parameters(aggregated_parameters)
+
         return aggregated_parameters_fl, {}
 
-    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateIns]]:
-        """Configure the next round of evaluation or reconstruction."""
+
+
+    def configure_evaluate(
+            self, server_round: int, parameters: fl.common.Parameters, client_manager: fl.server.ClientManager
+        ) -> List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateIns]]:
+        """Configure evaluation with optional dynamic grouping."""
+        
         if self.fraction_evaluate == 0.0:
             return []
 
@@ -130,9 +225,22 @@ class FedCustom(Strategy):
 
         sample_size, min_num_clients = self.num_evaluation_clients(client_manager.num_available())
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=min_num_clients)
-        evaluate_ins = EvaluateIns(parameters, config=config)
 
+        if self.dynamic_grouping == 1 and server_round > 1 and self.cluster_labels is not None:
+            # Assign cluster-specific parameters to clients based on clustering
+            evaluate_configurations = []
+            for client in clients:
+                client_id = client.cid
+                cluster = self.cluster_labels[int(client_id) % len(self.cluster_labels)]
+                cluster_parameters = self.cluster_models[cluster]
+                evaluate_ins = fl.common.EvaluateIns(cluster_parameters, config=config)
+                evaluate_configurations.append((client, evaluate_ins))
+            return evaluate_configurations
+
+        # Default evaluation configuration
+        evaluate_ins = fl.common.EvaluateIns(parameters, config=config)
         return [(client, evaluate_ins) for client in clients]
+
     
     def log_all_clients_hardware_resources(self, server_round, client_results):
         """Log each client's hardware usage in hardware_resources.ncol and aggregate CPU/GPU for resource_consumption.txt."""
@@ -142,13 +250,12 @@ class FedCustom(Strategy):
         with open(hardware_file_path, 'a') as file:
             file.write(f"Round {server_round}\n")
             for client, res in client_results:
-                cpu_usage = round(psutil.cpu_percent(interval=1), 3)
-                gpus = GPUtil.getGPUs()
-                gpu_usage = round(gpus[0].load * 100, 3) if gpus else 0
-                memory_usage = round(psutil.virtual_memory().percent, 3)
-                net_io = psutil.net_io_counters()
-                net_sent = round(net_io.bytes_sent / (1024 ** 2), 3)
-                net_received = round(net_io.bytes_recv / (1024 ** 2), 3)
+                metrics = res.metrics
+                cpu_usage = round(metrics.get('cpu_usage', 0), 3)
+                gpu_usage = round(metrics.get('gpu_usage', 0), 3)
+                memory_usage = round(metrics.get('memory_usage', 0), 3)
+                net_sent = round(metrics.get('network_sent', 0), 3)
+                net_received = round(metrics.get('network_received', 0), 3)
 
                 client_metrics.append({
                     "cpu": cpu_usage,
@@ -160,58 +267,98 @@ class FedCustom(Strategy):
 
                 file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
 
-        # After logging each client's data, log the aggregated metrics
         self.log_resource_consumption(server_round, client_metrics)
 
-    def aggregate_evaluate(self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes]], failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, EvaluateRes], BaseException]]) -> Tuple[Optional[float], Dict[str, Scalar]]:
-        """Aggregate evaluation results and log SSIM or Accuracy based on model type."""
+
+    def aggregate_evaluate(
+            self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]], 
+            failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes], BaseException]]
+        ) -> Tuple[Optional[float], Dict[str, fl.common.Scalar]]:
+        """Aggregate evaluation results and save metrics."""
+        
         if not results:
             return None, {}
 
+        total_metric = 0.0
+        total_examples = 0
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        metric_file_name = 'accuracy_scores.ncol' if self.model_type == "Image Classification" else 'ssim_scores.ncol'
-        metric_file_path = os.path.join(self.results_subfolder, metric_file_name)
+
+        metric_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
         evaluation_file_path = os.path.join(self.results_subfolder, 'aggregated_evaluation_loss.txt')
 
         metric_scores = []
-        total_metric = 0.0
-        total_examples = 0
-
-        self.log_all_clients_hardware_resources(server_round, results)
 
         for client, res in results:
             if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
                 metric_scores.append((client.cid, res.metrics['accuracy']))
                 total_metric += res.metrics['accuracy'] * res.num_examples
             elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
-                metric_scores.append((client.cid, res.metrics['ssim']))
                 total_metric += res.metrics['ssim'] * res.num_examples
+
             total_examples += res.num_examples
 
         aggregated_metric = total_metric / total_examples if total_examples > 0 else None
 
         metric_scores.sort(key=lambda x: int(x[0]))
+
+        # Save individual client accuracy/SSIM scores
         with open(metric_file_path, 'a') as file:
             file.write(f"Time: {current_time} - Round {server_round}\n")
             for cid, metric_value in metric_scores:
                 file.write(f"{cid} {metric_value}\n")
 
-        if self.scheduler is None:
-            self.optimizer = torch.optim.Adam([torch.nn.Parameter(torch.tensor([1.0]))], lr=self.initial_lr)
-            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.step_size, gamma=self.gamma)
-
-        if aggregated_metric is not None:
-            self.scheduler.step()
-            current_lr = self.optimizer.param_groups[0]['lr']
-
-            with open(evaluation_file_path, 'a') as file:
-                file.write(f"Time: {current_time} - Round {server_round} - LR {current_lr}\n")
-                if aggregated_metric is not None:
-                    metric_label = "Aggregated Test Accuracy" if self.model_type == "Image Classification" else "Aggregated Test SSIM"
-                    file.write(f"{metric_label}: {aggregated_metric:.4f}\n")
-                    print(f"Saved {metric_label} for round {server_round} in aggregated_evaluation_loss.txt")
+        with open(evaluation_file_path, 'a') as file:
+            file.write(f"Time: {current_time} - Round {server_round} - Aggregated Metric: {aggregated_metric:.4f}\n")
 
         return aggregated_metric, {}
+
+
+    def _save_cluster_assignments(self, results, cluster_labels, server_round):
+        """Save the cluster assignments for each client."""
+        cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
+        client_ids = [client.cid for client, _ in results]
+
+        with h5py.File(cluster_assignment_file_path, 'a') as f:
+            if str(server_round) not in f:
+                grp = f.create_group(str(server_round))
+                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
+                grp.create_dataset("cluster_labels", data=np.array(cluster_labels, dtype='i'))
+            else:
+                grp = f[str(server_round)]
+                grp["client_ids"][:] = np.array(client_ids, dtype='i')
+                grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
+
+        # Log cluster assignments for reference
+        log_path = os.path.join(self.results_subfolder, f"cluster_assignments_round_{server_round}.txt")
+        with open(log_path, 'w') as log_file:
+            log_file.write(f"Cluster Assignments for Round {server_round}\n")
+            log_file.write(f"{'Client ID':<15} {'Cluster Label':<15}\n")
+            for cid, label in zip(client_ids, cluster_labels):
+                log_file.write(f"{cid:<15} {label:<15}\n")
+        print(f"Cluster assignments saved for round {server_round}.")
+
+    def _compute_cluster_metrics(self, results):
+        """Compute the average SSIM and accuracy for each cluster based on the model type."""
+        cluster_scores = [{"ssim": 0.0, "accuracy": 0.0} for _ in range(self.num_clusters)]
+        cluster_examples = [0] * self.num_clusters
+
+        for client, res in results:
+            cluster_idx = self.cluster_labels[int(client.cid) % len(self.cluster_labels)]
+            
+            if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
+                cluster_scores[cluster_idx]["accuracy"] += res.metrics['accuracy'] * res.num_examples
+            elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
+                cluster_scores[cluster_idx]["ssim"] += res.metrics['ssim'] * res.num_examples
+
+            cluster_examples[cluster_idx] += res.num_examples
+
+        for cluster_idx in range(self.num_clusters):
+            if cluster_examples[cluster_idx] > 0:
+                cluster_scores[cluster_idx]["accuracy"] /= cluster_examples[cluster_idx]
+                cluster_scores[cluster_idx]["ssim"] /= cluster_examples[cluster_idx]
+
+        return cluster_scores
+
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters
@@ -220,12 +367,12 @@ class FedCustom(Strategy):
         return None
 
     def num_fit_clients(self, num_available_clients: int) -> Tuple[int, int]:
-        """Return sample size and required number of clients."""
+        """Return sample size and required number of clients for fitting."""
         num_clients = int(num_available_clients * self.fraction_fit)
         return max(num_clients, self.min_fit_clients), self.min_available_clients
 
     def num_evaluation_clients(self, num_available_clients: int) -> Tuple[int, int]:
-        """Use a fraction of available clients for evaluation."""
+        """Return sample size and required number of clients for evaluation."""
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
 
