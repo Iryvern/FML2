@@ -46,10 +46,6 @@ def setup_gradio_ui():
                             label="Number of Clients (default: 10)", 
                             value=default_values.get('num_clients', "10")
                         )
-                        num_fake_clients_input = gr.Textbox(
-                            label="Number of Fake Clients (default: 0)",
-                            value=default_values.get('num_fake_clients', "0")
-                        )
                         data_poisoning_percentage_input = gr.Textbox(
                             label="Data Poisoning Percentage (default: 0%)",
                             value=default_values.get('poison_percentage', "0")
@@ -110,7 +106,7 @@ def setup_gradio_ui():
                         dataset_folder_input, train_test_split_input, seed_input, num_clients_input,
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
-                        num_cpus_input, num_gpus_input, model_type_input, num_fake_clients_input,
+                        num_cpus_input, num_gpus_input, model_type_input,
                         data_poisoning_percentage_input, dynamic_grouping_enabled_input
                     ], 
                     outputs=output_text
@@ -122,7 +118,7 @@ def setup_gradio_ui():
                         dataset_folder_input, train_test_split_input, seed_input, num_clients_input, 
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
-                        num_cpus_input, num_gpus_input, model_type_input, num_fake_clients_input,
+                        num_cpus_input, num_gpus_input, model_type_input,
                         data_poisoning_percentage_input, dynamic_grouping_enabled_input
                     ], 
                     outputs=output_text
@@ -212,7 +208,7 @@ def setup_gradio_ui():
 
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
-                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type, num_fake_clients, data_poisoning_percentage, dynamic_grouping_enabled):
+                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type,data_poisoning_percentage, dynamic_grouping_enabled):
 
     train_test_split = float(train_test_split)
     seed = int(seed)

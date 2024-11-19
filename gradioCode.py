@@ -131,7 +131,7 @@ def plot_metric_scores(folder_name):
     return temp_file.name
 
 def save_default_values(dataset_folder, train_test_split, seed, num_clients, lr, factor, patience, epochs_per_round,
-                        initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type, num_fake_clients,poison_percentage, dynamic_grouping):
+                        initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type,poison_percentage, dynamic_grouping):
     values = {
         'dataset_folder': dataset_folder,
         'train_test_split': train_test_split,
@@ -148,7 +148,6 @@ def save_default_values(dataset_folder, train_test_split, seed, num_clients, lr,
         'num_cpus': num_cpus,
         'num_gpus': num_gpus,
         'model_type': model_type,
-        'num_fake_clients': num_fake_clients,
         'poison_percentage': poison_percentage,
         'dynamic_grouping': dynamic_grouping,
     }
