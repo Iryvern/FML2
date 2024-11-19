@@ -116,6 +116,18 @@ class FedCustom(Strategy):
 
         return fit_configurations
 
+    def log_cluster_assignments(self, server_round: int):
+        """Log cluster assignments of each client for the current round."""
+        if self.dynamic_grouping != 1 or self.cluster_labels is None:
+            return  # Skip logging if dynamic grouping is not enabled or no cluster labels are available.
+
+        cluster_log_file = os.path.join(self.results_subfolder, "cluster_assignments.txt")
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        with open(cluster_log_file, 'a') as file:
+            file.write(f"Time: {current_time} - Round {server_round} Clusters\n")
+            for client_id, cluster in enumerate(self.cluster_labels):
+                file.write(f"{client_id} {cluster + 1}\n")  # Add 1 to cluster to start numbering from 1
 
     def aggregate_parameters(self, parameters_list: List[List[np.ndarray]], server_round: int) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
         """Aggregate model parameters with optional dynamic grouping."""
@@ -197,17 +209,18 @@ class FedCustom(Strategy):
             # Default global aggregation logic
             aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
 
-        # Save the aggregated model (global model) regardless of grouping
-        if self.model_type == "Image Anomaly Detection":
-            net = SparseAutoencoder()
-        elif self.model_type == "Image Classification":
-            net = MobileNetV3()
+            # Save the aggregated model (global model) only for default grouping
+            if self.model_type == "Image Anomaly Detection":
+                net = SparseAutoencoder()
+            elif self.model_type == "Image Classification":
+                net = MobileNetV3()
 
-        state_dict = aggregated_parameters_to_state_dict(aggregated_parameters, self.model_type)
-        net.load_state_dict(state_dict)
-        torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
+            state_dict = aggregated_parameters_to_state_dict(aggregated_parameters, self.model_type)
+            net.load_state_dict(state_dict)
+            torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
 
         aggregated_parameters_fl = fl.common.ndarrays_to_parameters(aggregated_parameters)
+        self.log_cluster_assignments(server_round)
 
         return aggregated_parameters_fl, {}
 
