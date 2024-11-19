@@ -263,12 +263,13 @@ class FedCustom(Strategy):
         with open(hardware_file_path, 'a') as file:
             file.write(f"Round {server_round}\n")
             for client, res in client_results:
-                metrics = res.metrics
-                cpu_usage = round(metrics.get('cpu_usage', 0), 3)
-                gpu_usage = round(metrics.get('gpu_usage', 0), 3)
-                memory_usage = round(metrics.get('memory_usage', 0), 3)
-                net_sent = round(metrics.get('network_sent', 0), 3)
-                net_received = round(metrics.get('network_received', 0), 3)
+                cpu_usage = round(psutil.cpu_percent(interval=1), 3)
+                gpus = GPUtil.getGPUs()
+                gpu_usage = round(gpus[0].load * 100, 3) if gpus else 0
+                memory_usage = round(psutil.virtual_memory().percent, 3)
+                net_io = psutil.net_io_counters()
+                net_sent = round(net_io.bytes_sent / (1024 ** 2), 3)
+                net_received = round(net_io.bytes_recv / (1024 ** 2), 3)
 
                 client_metrics.append({
                     "cpu": cpu_usage,
@@ -280,98 +281,76 @@ class FedCustom(Strategy):
 
                 file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
 
+        # After logging each client's data, log the aggregated metrics
         self.log_resource_consumption(server_round, client_metrics)
 
-
-    def aggregate_evaluate(
-            self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]], 
-            failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes], BaseException]]
-        ) -> Tuple[Optional[float], Dict[str, fl.common.Scalar]]:
-        """Aggregate evaluation results and save metrics."""
-        
-        if not results:
-            return None, {}
-
-        total_metric = 0.0
-        total_examples = 0
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        metric_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
-        evaluation_file_path = os.path.join(self.results_subfolder, 'aggregated_evaluation_loss.txt')
-
-        metric_scores = []
-
-        for client, res in results:
-            if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
-                metric_scores.append((client.cid, res.metrics['accuracy']))
-                total_metric += res.metrics['accuracy'] * res.num_examples
-            elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
-                total_metric += res.metrics['ssim'] * res.num_examples
-
-            total_examples += res.num_examples
-
-        aggregated_metric = total_metric / total_examples if total_examples > 0 else None
-
-        metric_scores.sort(key=lambda x: int(x[0]))
-
-        # Save individual client accuracy/SSIM scores
-        with open(metric_file_path, 'a') as file:
-            file.write(f"Time: {current_time} - Round {server_round}\n")
-            for cid, metric_value in metric_scores:
-                file.write(f"{cid} {metric_value}\n")
-
-        with open(evaluation_file_path, 'a') as file:
-            file.write(f"Time: {current_time} - Round {server_round} - Aggregated Metric: {aggregated_metric:.4f}\n")
-
-        return aggregated_metric, {}
-
-
-    def _save_cluster_assignments(self, results, cluster_labels, server_round):
-        """Save the cluster assignments for each client."""
-        cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
-        client_ids = [client.cid for client, _ in results]
-
-        with h5py.File(cluster_assignment_file_path, 'a') as f:
-            if str(server_round) not in f:
-                grp = f.create_group(str(server_round))
-                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
-                grp.create_dataset("cluster_labels", data=np.array(cluster_labels, dtype='i'))
-            else:
-                grp = f[str(server_round)]
-                grp["client_ids"][:] = np.array(client_ids, dtype='i')
-                grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
-
-        # Log cluster assignments for reference
-        log_path = os.path.join(self.results_subfolder, f"cluster_assignments_round_{server_round}.txt")
-        with open(log_path, 'w') as log_file:
-            log_file.write(f"Cluster Assignments for Round {server_round}\n")
-            log_file.write(f"{'Client ID':<15} {'Cluster Label':<15}\n")
-            for cid, label in zip(client_ids, cluster_labels):
-                log_file.write(f"{cid:<15} {label:<15}\n")
-        print(f"Cluster assignments saved for round {server_round}.")
-
-    def _compute_cluster_metrics(self, results):
-        """Compute the average SSIM and accuracy for each cluster based on the model type."""
-        cluster_scores = [{"ssim": 0.0, "accuracy": 0.0} for _ in range(self.num_clusters)]
-        cluster_examples = [0] * self.num_clusters
+    def _compute_group_metrics(self, results):
+        """Compute average metric for each group in dynamic grouping."""
+        group_metrics = [0.0] * self.num_clusters
+        group_counts = [0] * self.num_clusters
 
         for client, res in results:
             cluster_idx = self.cluster_labels[int(client.cid) % len(self.cluster_labels)]
+            metric_value = res.metrics['accuracy'] if self.model_type == "Image Classification" else res.metrics['ssim']
+            group_metrics[cluster_idx] += metric_value * res.num_examples
+            group_counts[cluster_idx] += res.num_examples
+
+        for idx in range(self.num_clusters):
+            if group_counts[idx] > 0:
+                group_metrics[idx] /= group_counts[idx]
+
+        return group_metrics
+
+    def aggregate_evaluate(
+                self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
+                failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes], BaseException]]
+            ) -> Tuple[Optional[float], Dict[str, fl.common.Scalar]]:
+            """Aggregate evaluation results and save metrics, supporting dynamic grouping."""
+
+            if not results:
+                return None, {}
+
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            metric_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
             
-            if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
-                cluster_scores[cluster_idx]["accuracy"] += res.metrics['accuracy'] * res.num_examples
-            elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
-                cluster_scores[cluster_idx]["ssim"] += res.metrics['ssim'] * res.num_examples
+            # Determine output file based on dynamic grouping
+            evaluation_file_name = 'evaluation_loss.txt' if self.dynamic_grouping == 1 else 'aggregated_evaluation_loss.txt'
+            evaluation_file_path = os.path.join(self.results_subfolder, evaluation_file_name)
 
-            cluster_examples[cluster_idx] += res.num_examples
+            total_metric = 0.0
+            total_examples = 0
+            metric_scores = []
 
-        for cluster_idx in range(self.num_clusters):
-            if cluster_examples[cluster_idx] > 0:
-                cluster_scores[cluster_idx]["accuracy"] /= cluster_examples[cluster_idx]
-                cluster_scores[cluster_idx]["ssim"] /= cluster_examples[cluster_idx]
+            # Aggregate client metrics
+            for client, res in results:
+                if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
+                    metric_scores.append((client.cid, res.metrics['accuracy']))
+                    total_metric += res.metrics['accuracy'] * res.num_examples
+                elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
+                    metric_scores.append((client.cid, res.metrics['ssim']))
+                    total_metric += res.metrics['ssim'] * res.num_examples
+                total_examples += res.num_examples
 
-        return cluster_scores
+            aggregated_metric = total_metric / total_examples if total_examples > 0 else None
 
+            # Save client scores
+            metric_scores.sort(key=lambda x: int(x[0]))
+            with open(metric_file_path, 'a') as file:
+                file.write(f"Time: {current_time} - Round {server_round}\n")
+                for cid, metric_value in metric_scores:
+                    file.write(f"{cid} {metric_value}\n")
+
+            # Save grouped or aggregated metrics
+            with open(evaluation_file_path, 'a') as file:
+                file.write(f"Time: {current_time} - Round {server_round}\n")
+                if self.dynamic_grouping == 1 and self.cluster_labels is not None:
+                    group_metrics = self._compute_group_metrics(results)
+                    for group_idx, metric in enumerate(group_metrics, start=1):
+                        file.write(f"Group-{group_idx}: {metric:.4f}\n")
+                else:
+                    file.write(f"Aggregated Metric: {aggregated_metric:.4f}\n")
+
+            return aggregated_metric, {}
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters
