@@ -320,6 +320,7 @@ class FedCustom(Strategy):
             total_metric = 0.0
             total_examples = 0
             metric_scores = []
+            self.log_all_clients_hardware_resources(server_round, results)
 
             # Aggregate client metrics
             for client, res in results:
