@@ -116,26 +116,13 @@ class FedCustom(Strategy):
 
         return fit_configurations
 
-    def log_cluster_assignments(self, server_round: int):
-        """Log cluster assignments of each client for the current round."""
-        if self.dynamic_grouping != 1 or self.cluster_labels is None:
-            return  # Skip logging if dynamic grouping is not enabled or no cluster labels are available.
-
-        cluster_log_file = os.path.join(self.results_subfolder, "cluster_assignments.txt")
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        with open(cluster_log_file, 'a') as file:
-            file.write(f"Time: {current_time} - Round {server_round} Clusters\n")
-            for client_id, cluster in enumerate(self.cluster_labels):
-                file.write(f"{client_id} {cluster + 1}\n")  # Add 1 to cluster to start numbering from 1
-
     def aggregate_parameters(self, parameters_list: List[List[np.ndarray]], server_round: int) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
         """Aggregate model parameters with optional dynamic grouping."""
         num_models = len(parameters_list)
         cluster_labels = None
 
         if self.dynamic_grouping == 1:
-            if server_round == 1 or server_round % 25 == 0:
+            if server_round == 1 or server_round % 2 == 0:
                 # Flatten the parameter arrays to create a feature vector for each model
                 flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
 
@@ -144,9 +131,10 @@ class FedCustom(Strategy):
                 kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
                 cluster_labels = kmeans.fit_predict(similarity_matrix)
             else:
-                # Load the cluster labels from the last clustering round if the file exists
-                if os.path.exists('cluster_assignments.h5'):
-                    with h5py.File('cluster_assignments.h5', 'r') as f:
+                # Load the cluster labels from the last clustering round if the file exists in the results folder
+                cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
+                if os.path.exists(cluster_assignment_file_path):
+                    with h5py.File(cluster_assignment_file_path, 'r') as f:
                         previous_rounds = [int(r) for r in f.keys() if int(r) < server_round]
                         if previous_rounds:
                             last_round = max(previous_rounds)
@@ -178,6 +166,22 @@ class FedCustom(Strategy):
 
         return final_aggregated_parameters, cluster_labels
 
+
+    def _save_cluster_assignments(self, results, cluster_labels, server_round):
+        """Save the cluster assignments for each client in the results subfolder."""
+        # Define the path to save cluster assignments
+        cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
+        client_ids = [client.cid for client, _ in results]
+
+        with h5py.File(cluster_assignment_file_path, 'a') as f:
+            if str(server_round) not in f:
+                grp = f.create_group(str(server_round))
+                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
+                grp.create_dataset("cluster_labels", data=np.array(cluster_labels, dtype='i'))
+            else:
+                grp = f[str(server_round)]
+                grp["client_ids"][:] = np.array(client_ids, dtype='i')
+                grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
 
     def aggregate_fit(
         self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]], 
@@ -220,7 +224,6 @@ class FedCustom(Strategy):
             torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
 
         aggregated_parameters_fl = fl.common.ndarrays_to_parameters(aggregated_parameters)
-        self.log_cluster_assignments(server_round)
 
         return aggregated_parameters_fl, {}
 
@@ -350,6 +353,7 @@ class FedCustom(Strategy):
                         file.write(f"Group-{group_idx}: {metric:.4f}\n")
                 else:
                     file.write(f"Aggregated Metric: {aggregated_metric:.4f}\n")
+            self._save_cluster_assignments(results, self.cluster_labels, server_round)
 
             return aggregated_metric, {}
 
