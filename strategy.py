@@ -22,16 +22,16 @@ class FedCustom(Strategy):
         step_size: int = 30,
         gamma: float = 0.9,
         model_type: str = "Image Classification",
-        num_clusters: int = 3 
+        num_clusters: int = 3,
     ) -> None:
-
         with open('Default.txt', 'r') as f:
             config = dict(line.strip().split('=') for line in f if '=' in line)
-    
+
         dynamic_grouping = float(config.get('dynamic_grouping', 0))
-        clustering_frequency = float(config.get('dynamic_grouping', 0))
-        self.clustering_frequency = clustering_frequency
+        clustering_frequency = int(config.get('clustering_frequency', 1))  # Fetch the correct frequency value
+
         self.dynamic_grouping = dynamic_grouping
+        self.clustering_frequency = clustering_frequency
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
         self.min_fit_clients = min_fit_clients
@@ -48,12 +48,15 @@ class FedCustom(Strategy):
         self.cluster_models = {cluster: None for cluster in range(self.num_clusters)}
 
         # Create a new subfolder within "results" using model type, date, and time
-        self.results_subfolder = os.path.join("results", f"{self.model_type}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
+        self.results_subfolder = os.path.join(
+            "results", f"{self.model_type}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+        )
         os.makedirs(self.results_subfolder, exist_ok=True)
 
         # Initialize the resource consumption log file
         self.resource_consumption_file = os.path.join(self.results_subfolder, "resource_consumption.txt")
         self.initialize_resource_log()
+
 
     def initialize_resource_log(self):
         """Initialize the resource consumption log file with column headers."""
@@ -124,6 +127,7 @@ class FedCustom(Strategy):
         cluster_labels = None
 
         if self.dynamic_grouping == 1:
+            # Apply clustering only on the first round or at intervals of clustering_frequency
             if server_round == 1 or server_round % self.clustering_frequency == 0:
                 # Flatten the parameter arrays to create a feature vector for each model
                 flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
@@ -133,7 +137,7 @@ class FedCustom(Strategy):
                 kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
                 cluster_labels = kmeans.fit_predict(similarity_matrix)
             else:
-                # Load the cluster labels from the last clustering round if the file exists in the results folder
+                # Load cluster labels from the last clustering round if available
                 cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
                 if os.path.exists(cluster_assignment_file_path):
                     with h5py.File(cluster_assignment_file_path, 'r') as f:
@@ -163,10 +167,11 @@ class FedCustom(Strategy):
             # Update the cluster models for the next round
             self.cluster_models = {cluster: fl.common.ndarrays_to_parameters(params) for cluster, params in enumerate(aggregated_parameters)}
         else:
-            # Default aggregation logic (global averaging if no dynamic grouping)
+            # Default global aggregation
             final_aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
 
         return final_aggregated_parameters, cluster_labels
+
 
 
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
