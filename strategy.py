@@ -122,7 +122,7 @@ class FedCustom(Strategy):
         cluster_labels = None
 
         if self.dynamic_grouping == 1:
-            if server_round == 1 or server_round % 4 == 0:
+            if server_round == 1 or server_round % 2 == 0:
                 # Flatten the parameter arrays to create a feature vector for each model
                 flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
 
@@ -168,8 +168,10 @@ class FedCustom(Strategy):
 
 
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
-        """Save the cluster assignments for each client in the results subfolder."""
-        # Define the path to save cluster assignments
+        """Save the cluster assignments for each client."""
+        if self.dynamic_grouping != 1 or cluster_labels is None:
+            return  # Skip saving if dynamic grouping is not enabled or cluster_labels is None.
+
         cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
         client_ids = [client.cid for client, _ in results]
 
@@ -182,6 +184,16 @@ class FedCustom(Strategy):
                 grp = f[str(server_round)]
                 grp["client_ids"][:] = np.array(client_ids, dtype='i')
                 grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
+
+        # Log cluster assignments for reference
+        log_path = os.path.join(self.results_subfolder, f"cluster_assignments_round_{server_round}.txt")
+        with open(log_path, 'w') as log_file:
+            log_file.write(f"Cluster Assignments for Round {server_round}\n")
+            log_file.write(f"{'Client ID':<15} {'Cluster Label':<15}\n")
+            for cid, label in zip(client_ids, cluster_labels):
+                log_file.write(f"{cid:<15} {label:<15}\n")
+        print(f"Cluster assignments saved for round {server_round}.")
+
 
     def aggregate_fit(
         self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]], 
@@ -305,57 +317,60 @@ class FedCustom(Strategy):
         return group_metrics
 
     def aggregate_evaluate(
-                self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
-                failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes], BaseException]]
-            ) -> Tuple[Optional[float], Dict[str, fl.common.Scalar]]:
-            """Aggregate evaluation results and save metrics, supporting dynamic grouping."""
+        self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
+        failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes], BaseException]]
+    ) -> Tuple[Optional[float], Dict[str, fl.common.Scalar]]:
+        """Aggregate evaluation results and save metrics, supporting dynamic grouping."""
 
-            if not results:
-                return None, {}
+        if not results:
+            return None, {}
 
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            metric_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
-            
-            # Determine output file based on dynamic grouping
-            evaluation_file_name = 'evaluation_loss.txt' if self.dynamic_grouping == 1 else 'aggregated_evaluation_loss.txt'
-            evaluation_file_path = os.path.join(self.results_subfolder, evaluation_file_name)
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        metric_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
+        
+        # Determine output file based on dynamic grouping
+        evaluation_file_name = 'evaluation_loss.txt' if self.dynamic_grouping == 1 else 'aggregated_evaluation_loss.txt'
+        evaluation_file_path = os.path.join(self.results_subfolder, evaluation_file_name)
 
-            total_metric = 0.0
-            total_examples = 0
-            metric_scores = []
-            self.log_all_clients_hardware_resources(server_round, results)
+        total_metric = 0.0
+        total_examples = 0
+        metric_scores = []
 
-            # Aggregate client metrics
-            for client, res in results:
-                if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
-                    metric_scores.append((client.cid, res.metrics['accuracy']))
-                    total_metric += res.metrics['accuracy'] * res.num_examples
-                elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
-                    metric_scores.append((client.cid, res.metrics['ssim']))
-                    total_metric += res.metrics['ssim'] * res.num_examples
-                total_examples += res.num_examples
+        # Aggregate client metrics
+        for client, res in results:
+            if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
+                metric_scores.append((client.cid, res.metrics['accuracy']))
+                total_metric += res.metrics['accuracy'] * res.num_examples
+            elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
+                metric_scores.append((client.cid, res.metrics['ssim']))
+                total_metric += res.metrics['ssim'] * res.num_examples
+            total_examples += res.num_examples
 
-            aggregated_metric = total_metric / total_examples if total_examples > 0 else None
+        aggregated_metric = total_metric / total_examples if total_examples > 0 else None
 
-            # Save client scores
-            metric_scores.sort(key=lambda x: int(x[0]))
-            with open(metric_file_path, 'a') as file:
-                file.write(f"Time: {current_time} - Round {server_round}\n")
-                for cid, metric_value in metric_scores:
-                    file.write(f"{cid} {metric_value}\n")
+        # Save client scores
+        metric_scores.sort(key=lambda x: int(x[0]))
+        with open(metric_file_path, 'a') as file:
+            file.write(f"Time: {current_time} - Round {server_round}\n")
+            for cid, metric_value in metric_scores:
+                file.write(f"{cid} {metric_value}\n")
 
-            # Save grouped or aggregated metrics
-            with open(evaluation_file_path, 'a') as file:
-                file.write(f"Time: {current_time} - Round {server_round}\n")
-                if self.dynamic_grouping == 1 and self.cluster_labels is not None:
-                    group_metrics = self._compute_group_metrics(results)
-                    for group_idx, metric in enumerate(group_metrics, start=1):
-                        file.write(f"Group-{group_idx}: {metric:.4f}\n")
-                else:
-                    file.write(f"Aggregated Metric: {aggregated_metric:.4f}\n")
+        # Save grouped or aggregated metrics
+        with open(evaluation_file_path, 'a') as file:
+            file.write(f"Time: {current_time} - Round {server_round}\n")
+            if self.dynamic_grouping == 1 and self.cluster_labels is not None:
+                group_metrics = self._compute_group_metrics(results)
+                for group_idx, metric in enumerate(group_metrics, start=1):
+                    file.write(f"Group-{group_idx}: {metric:.4f}\n")
+            else:
+                file.write(f"Aggregated Metric: {aggregated_metric:.4f}\n")
+
+        # Save cluster assignments only if dynamic grouping is enabled
+        if self.dynamic_grouping == 1:
             self._save_cluster_assignments(results, self.cluster_labels, server_round)
 
-            return aggregated_metric, {}
+        return aggregated_metric, {}
+
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters
