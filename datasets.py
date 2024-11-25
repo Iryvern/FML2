@@ -52,7 +52,7 @@ class SelfDrivingCarDataset(Dataset):
         # Return the image and class label
         return image, torch.tensor(label, dtype=torch.int64)
 
-def load_datasets(num_clients: int, dataset_path: str, train_transform, test_transform, model_type: str):
+def load_datasets(num_clients: int, dataset_path: str, train_transform, test_transform, model_type: str, data_split: List[float] = None):
     from utils import poison_dataset  # Import the poison_dataset function
 
     # Determine which dataset to use based on model_type
@@ -80,13 +80,35 @@ def load_datasets(num_clients: int, dataset_path: str, train_transform, test_tra
 
     # Partition training set across clients
     train_len = len(trainset)
-    partition_size = train_len // num_clients
-    lengths = [partition_size] * num_clients
-    if train_len % num_clients != 0:
-        lengths[-1] += train_len % num_clients
+    
+    if data_split is None:
+        # Default: Evenly split the data among clients
+        partition_size = train_len // num_clients
+        lengths = [partition_size] * num_clients
+        if train_len % num_clients != 0:
+            lengths[-1] += train_len % num_clients
+    else:
+        # Validate the custom data_split
+        if sum(data_split) > 1.0:
+            raise ValueError("The sum of data_split fractions must not exceed 1.0.")
+        if len(data_split) != num_clients:
+            raise ValueError("Length of data_split must match the number of clients.")
+
+        # Compute the lengths for each client
+        lengths = [int(train_len * fraction) for fraction in data_split]
+        # Adjust for any remaining data due to rounding
+        if sum(lengths) < train_len:
+            lengths[-1] += train_len - sum(lengths)
 
     datasets = random_split(trainset, lengths, generator=torch.Generator().manual_seed(42))
     trainloaders = [DataLoader(ds, batch_size=64, shuffle=True) for ds in datasets]
     testloader = DataLoader(testset, batch_size=64, shuffle=False)
 
+    # Print out the split information
+    print("Dataset split among clients:")
+    for client_idx, length in enumerate(lengths):
+        print(f"Client {client_idx + 1}: {length} samples")
+
     return trainloaders, testloader
+
+

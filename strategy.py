@@ -122,7 +122,7 @@ class FedCustom(Strategy):
         cluster_labels = None
 
         if self.dynamic_grouping == 1:
-            if server_round == 1 or server_round % 2 == 0:
+            if server_round == 1 or server_round % 4 == 0:
                 # Flatten the parameter arrays to create a feature vector for each model
                 flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
 
