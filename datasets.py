@@ -1,7 +1,6 @@
 from imports import *
 from torch.utils.data import Dataset, DataLoader, random_split
 import pandas as pd
-from utils import poison_dataset
 from PIL import Image
 import os
 import torch
@@ -52,9 +51,21 @@ class SelfDrivingCarDataset(Dataset):
         # Return the image and class label
         return image, torch.tensor(label, dtype=torch.int64)
 
-def load_datasets(num_clients: int, dataset_path: str, train_transform, test_transform, model_type: str, data_split: List[float] = None):
-    from utils import poison_dataset  # Import the poison_dataset function
 
+def load_datasets(
+    num_clients: int,
+    dataset_path: str,
+    train_transform,
+    test_transform,
+    model_type: str,
+    data_split: List[float] = None,
+):
+    # Load configuration from the Default.txt file
+    with open('Default.txt', 'r') as f:
+        config = dict(line.strip().split('=') for line in f if '=' in line)
+    
+    poison_value = float(config.get('poison_percentage', 0)) / 100  # Convert to fraction (e.g., 20 -> 0.2)
+    
     # Determine which dataset to use based on model_type
     if model_type == "Image Anomaly Detection":
         dataset = ChestXrayDataset(root_dir=dataset_path, transform=train_transform)
@@ -68,8 +79,8 @@ def load_datasets(num_clients: int, dataset_path: str, train_transform, test_tra
     elif model_type == "Image Classification":
         images_dir = os.path.join(dataset_path, 'images')
         
-        # Use the poison_dataset function to potentially poison the train dataset
-        train_labels_file = poison_dataset(os.path.join(dataset_path, 'labels_train.csv'))
+        # Load dataset files
+        train_labels_file = os.path.join(dataset_path, 'labels_train.csv')
         val_labels_file = os.path.join(dataset_path, 'labels_val.csv')
         
         trainset = SelfDrivingCarDataset(images_dir=images_dir, labels_file=train_labels_file, transform=train_transform)
@@ -101,14 +112,50 @@ def load_datasets(num_clients: int, dataset_path: str, train_transform, test_tra
             lengths[-1] += train_len - sum(lengths)
 
     datasets = random_split(trainset, lengths, generator=torch.Generator().manual_seed(42))
+
+    # Apply poisoning to the first client's dataset if poison_value is set
+    if poison_value > 0.0:
+        num_poisoned_samples = int(len(datasets[0]) * poison_value)
+        print(f"Applying poisoning to {poison_value * 100:.1f}% of the data for the first client ({num_poisoned_samples} samples)...")
+        datasets[0] = poison_subset(datasets[0], poison_value)
+
+    # Print the split information for debugging
+    print("Data split among clients (number of samples per client):")
+    for idx, length in enumerate(lengths):
+        poisoned = "*" if idx == 0 and poison_value > 0 else ""
+        print(f"  Client {idx + 1}: {length} samples {poisoned}")
+
+    # Create DataLoaders
     trainloaders = [DataLoader(ds, batch_size=64, shuffle=True) for ds in datasets]
     testloader = DataLoader(testset, batch_size=64, shuffle=False)
 
-    # Print out the split information
-    print("Dataset split among clients:")
-    for client_idx, length in enumerate(lengths):
-        print(f"Client {client_idx + 1}: {length} samples")
-
     return trainloaders, testloader
+
+
+def poison_subset(subset: torch.utils.data.Subset, poison_percentage: float) -> torch.utils.data.Subset:
+    # Extract the dataset and indices
+    dataset = subset.dataset
+    indices = subset.indices
+
+    if not isinstance(dataset, SelfDrivingCarDataset):
+        raise TypeError("poison_subset currently supports only SelfDrivingCarDataset.")
+
+    # Determine the number of rows to poison
+    num_rows = len(indices)
+    num_to_poison = int(num_rows * poison_percentage)
+
+    # Shuffle indices and select the first `num_to_poison` for poisoning
+    indices_to_poison = torch.randperm(num_rows)[:num_to_poison]
+
+    # Apply poisoning by incrementing the label for the selected indices
+    for idx in indices_to_poison:
+        img_name = dataset.images[indices[idx]]
+        dataset.labels_df.loc[dataset.labels_df['frame'] == img_name, 'class_id'] += 1
+
+    # Update the labels dictionary
+    dataset.labels = {row['frame']: row['class_id'] for _, row in dataset.labels_df.iterrows()}
+
+    return subset
+
 
 
