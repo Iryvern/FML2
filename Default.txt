@@ -14,4 +14,5 @@ num_cpus=1
 num_gpus=0.8
 model_type=Image Classification
 poison_percentage=10
-dynamic_grouping=0
+dynamic_grouping=1
+clustering_frequency=3

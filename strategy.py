@@ -29,6 +29,8 @@ class FedCustom(Strategy):
             config = dict(line.strip().split('=') for line in f if '=' in line)
     
         dynamic_grouping = float(config.get('dynamic_grouping', 0))
+        clustering_frequency = float(config.get('dynamic_grouping', 0))
+        self.clustering_frequency = clustering_frequency
         self.dynamic_grouping = dynamic_grouping
         self.fraction_fit = fraction_fit
         self.fraction_evaluate = fraction_evaluate
@@ -122,7 +124,7 @@ class FedCustom(Strategy):
         cluster_labels = None
 
         if self.dynamic_grouping == 1:
-            if server_round == 1 or server_round % 2 == 0:
+            if server_round == 1 or server_round % self.clustering_frequency == 0:
                 # Flatten the parameter arrays to create a feature vector for each model
                 flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
 
@@ -168,31 +170,39 @@ class FedCustom(Strategy):
 
 
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
-        """Save the cluster assignments for each client."""
+        """Save the cluster assignments for each client in a single file with sorted client IDs."""
         if self.dynamic_grouping != 1 or cluster_labels is None:
             return  # Skip saving if dynamic grouping is not enabled or cluster_labels is None.
 
         cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
+        consolidated_log_path = os.path.join(self.results_subfolder, "cluster_assignments.txt")
         client_ids = [client.cid for client, _ in results]
 
+        # Combine client IDs and cluster labels, then sort by client ID
+        sorted_assignments = sorted(zip(client_ids, cluster_labels), key=lambda x: int(x[0]))
+
+        # Separate sorted client IDs and cluster labels
+        sorted_client_ids, sorted_cluster_labels = zip(*sorted_assignments)
+
+        # Save cluster assignments in the HDF5 file
         with h5py.File(cluster_assignment_file_path, 'a') as f:
             if str(server_round) not in f:
                 grp = f.create_group(str(server_round))
-                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
-                grp.create_dataset("cluster_labels", data=np.array(cluster_labels, dtype='i'))
+                grp.create_dataset("client_ids", data=np.array(sorted_client_ids, dtype='i'))
+                grp.create_dataset("cluster_labels", data=np.array(sorted_cluster_labels, dtype='i'))
             else:
                 grp = f[str(server_round)]
-                grp["client_ids"][:] = np.array(client_ids, dtype='i')
-                grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
+                grp["client_ids"][:] = np.array(sorted_client_ids, dtype='i')
+                grp["cluster_labels"][:] = np.array(sorted_cluster_labels, dtype='i')
 
-        # Log cluster assignments for reference
-        log_path = os.path.join(self.results_subfolder, f"cluster_assignments_round_{server_round}.txt")
-        with open(log_path, 'w') as log_file:
-            log_file.write(f"Cluster Assignments for Round {server_round}\n")
+        # Append sorted cluster assignments to a single text file
+        with open(consolidated_log_path, 'a') as log_file:
+            log_file.write(f"\nRound {server_round} Cluster Assignments:\n")
             log_file.write(f"{'Client ID':<15} {'Cluster Label':<15}\n")
-            for cid, label in zip(client_ids, cluster_labels):
+            for cid, label in sorted_assignments:
                 log_file.write(f"{cid:<15} {label:<15}\n")
-        print(f"Cluster assignments saved for round {server_round}.")
+
+        print(f"Cluster assignments for round {server_round} saved to a consolidated file with sorted client IDs.")
 
 
     def aggregate_fit(
@@ -335,6 +345,7 @@ class FedCustom(Strategy):
         total_metric = 0.0
         total_examples = 0
         metric_scores = []
+        self.log_all_clients_hardware_resources(server_round, results)
 
         # Aggregate client metrics
         for client, res in results:

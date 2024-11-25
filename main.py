@@ -73,6 +73,10 @@ def setup_gradio_ui():
                             label="Dynamic Grouping (Off:0, On:1)",
                             value=default_values.get('dynamic_grouping', "0")
                         )
+                        clustering_frequency_input = gr.Textbox(
+                            label="Clustering Frequency (Default: 5)",
+                            value=default_values.get('clustering_frequency', "5")
+                        )
 
                     with gr.Column():
                         initial_lr_input = gr.Textbox(
@@ -107,7 +111,8 @@ def setup_gradio_ui():
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
                         num_cpus_input, num_gpus_input, model_type_input,
-                        data_poisoning_percentage_input, dynamic_grouping_enabled_input
+                        data_poisoning_percentage_input, dynamic_grouping_enabled_input,
+                        clustering_frequency_input
                     ], 
                     outputs=output_text
                 )
@@ -119,7 +124,8 @@ def setup_gradio_ui():
                         lr_input, factor_input, patience_input, epochs_input,
                         initial_lr_input, step_size_input, gamma_input, num_rounds_input,
                         num_cpus_input, num_gpus_input, model_type_input,
-                        data_poisoning_percentage_input, dynamic_grouping_enabled_input
+                        data_poisoning_percentage_input, dynamic_grouping_enabled_input,
+                        clustering_frequency_input
                     ], 
                     outputs=output_text
                 )
@@ -208,7 +214,7 @@ def setup_gradio_ui():
 
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
-                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type,data_poisoning_percentage, dynamic_grouping_enabled):
+                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type,data_poisoning_percentage, dynamic_grouping_enabled, clustering_frequency):
 
     train_test_split = float(train_test_split)
     seed = int(seed)
