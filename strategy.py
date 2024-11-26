@@ -9,6 +9,8 @@ import GPUtil
 import h5py
 from sklearn.cluster import KMeans
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import MinMaxScaler
+import numpy as np
 
 class FedCustom(Strategy):
     def __init__(
@@ -219,7 +221,24 @@ class FedCustom(Strategy):
         if not results:
             return None, {}
 
+        # Convert FitRes to list of parameter ndarrays and extract local models
         parameters_list = [parameters_to_ndarrays(res.parameters) for client, res in results]
+        local_updates = [{"client_id": client.cid, "model": res.parameters} for client, res in results]
+
+        # Detect poisoned clients using CosDefense
+        if self.dynamic_grouping == 1:
+            # Convert global parameters into the model
+            global_parameters_ndarrays = parameters_to_ndarrays(self.initialize_parameters(None))
+            if self.model_type == "Image Anomaly Detection":
+                global_model = SparseAutoencoder()
+            elif self.model_type == "Image Classification":
+                global_model = MobileNetV3()
+            else:
+                raise ValueError(f"Unsupported model type: {self.model_type}")
+
+            # Load the global parameters into the model
+            global_model.load_state_dict(aggregated_parameters_to_state_dict(global_parameters_ndarrays, self.model_type))
+            self.detect_potential_poisoned_client(server_round, global_model, local_updates)
 
         # Dynamic grouping logic if enabled
         if self.dynamic_grouping == 1:
@@ -403,6 +422,37 @@ class FedCustom(Strategy):
         """Return sample size and required number of clients for evaluation."""
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
+
+    def detect_potential_poisoned_client(self, server_round: int, global_model, local_updates):
+        """Detect the client with potentially poisoned data and save the results using CosDefense."""
+
+        # Extract the last layer of the global model
+        global_last_layer = next(reversed(global_model.state_dict().values()))
+
+        # Extract local updates
+        client_scores = {}
+        for update in local_updates:
+            client_id = update["client_id"]
+            local_parameters = parameters_to_ndarrays(update["model"])
+            local_model_state = aggregated_parameters_to_state_dict(local_parameters, self.model_type)
+
+            # Compute cosine similarity
+            local_last_layer = next(reversed(local_model_state.values()))
+            similarity = cosine_similarity(global_last_layer.reshape(1, -1), local_last_layer.reshape(1, -1))[0][0]
+            client_scores[client_id] = similarity
+
+        # Identify the client with the lowest similarity score
+        potential_poisoned_client = min(client_scores, key=client_scores.get)
+
+        # Save detection results
+        poisoned_log_path = os.path.join(self.results_subfolder, "poisoned_client_detection.txt")
+        with open(poisoned_log_path, 'a') as log_file:
+            log_file.write(f"Round {server_round} - Potential Poisoned Client Detection\n")
+            log_file.write(f"Potential Poisoned Client: Client-{potential_poisoned_client}\n")
+            log_file.write(f"Similarity Scores: {client_scores}\n")
+
+        print(f"Detection results saved for round {server_round} in {poisoned_log_path}.")
+
 
 def aggregated_parameters_to_state_dict(aggregated_parameters, model_type):
     """Convert aggregated parameters to a state dictionary based on model type."""
