@@ -175,7 +175,6 @@ class FedCustom(Strategy):
         return final_aggregated_parameters, cluster_labels
 
 
-
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
         """Save the cluster assignments for each client in a single file with sorted client IDs."""
         if self.dynamic_grouping != 1 or cluster_labels is None:
@@ -213,7 +212,7 @@ class FedCustom(Strategy):
 
 
     def aggregate_fit(
-        self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]], 
+        self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
         failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]]
     ) -> Tuple[Optional[fl.common.Parameters], Dict[str, fl.common.Scalar]]:
         """Aggregate fit results and save models for both dynamic and default grouping."""
@@ -221,58 +220,23 @@ class FedCustom(Strategy):
         if not results:
             return None, {}
 
-        # Convert FitRes to list of parameter ndarrays and extract local models
         parameters_list = [parameters_to_ndarrays(res.parameters) for client, res in results]
-        local_updates = [{"client_id": client.cid, "model": res.parameters} for client, res in results]
 
-        # Detect poisoned clients using CosDefense
         if self.dynamic_grouping == 1:
-            # Convert global parameters into the model
-            global_parameters_ndarrays = parameters_to_ndarrays(self.initialize_parameters(None))
-            if self.model_type == "Image Anomaly Detection":
-                global_model = SparseAutoencoder()
-            elif self.model_type == "Image Classification":
-                global_model = MobileNetV3()
-            else:
-                raise ValueError(f"Unsupported model type: {self.model_type}")
-
-            # Load the global parameters into the model
-            global_model.load_state_dict(aggregated_parameters_to_state_dict(global_parameters_ndarrays, self.model_type))
-            self.detect_potential_poisoned_client(server_round, global_model, local_updates)
-
-        # Dynamic grouping logic if enabled
-        if self.dynamic_grouping == 1:
+            # Perform clustering and aggregate parameters for each cluster
             aggregated_parameters, cluster_labels = self.aggregate_parameters(parameters_list, server_round)
-            self.cluster_labels = cluster_labels  # Store cluster_labels for use in other functions
+            self.cluster_labels = cluster_labels  # Store cluster labels for this round
 
-            # Save the latest model for each cluster
-            for cluster, params in self.cluster_models.items():
-                if self.model_type == "Image Anomaly Detection":
-                    net = SparseAutoencoder()
-                elif self.model_type == "Image Classification":
-                    net = MobileNetV3()
+            # Save cluster assignments
+            self._save_cluster_assignments(results, cluster_labels, server_round)
 
-                state_dict = aggregated_parameters_to_state_dict(parameters_to_ndarrays(params), self.model_type)
-                net.load_state_dict(state_dict)
-                torch.save(net.state_dict(), os.path.join(self.results_subfolder, f"latest_model_cluster_{cluster}.pth"))
         else:
             # Default global aggregation logic
             aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
 
-            # Save the aggregated model (global model) only for default grouping
-            if self.model_type == "Image Anomaly Detection":
-                net = SparseAutoencoder()
-            elif self.model_type == "Image Classification":
-                net = MobileNetV3()
-
-            state_dict = aggregated_parameters_to_state_dict(aggregated_parameters, self.model_type)
-            net.load_state_dict(state_dict)
-            torch.save(net.state_dict(), os.path.join(self.results_subfolder, "latest_model.pth"))
-
         aggregated_parameters_fl = fl.common.ndarrays_to_parameters(aggregated_parameters)
 
         return aggregated_parameters_fl, {}
-
 
 
     def configure_evaluate(
@@ -350,12 +314,71 @@ class FedCustom(Strategy):
 
         return group_metrics
 
+    def _select_best_model(self, server_round: int, evaluation_file_path: str) -> Tuple[int, float]:
+        """Identify the best-performing cluster based on evaluation metrics."""
+        best_cluster = None
+        best_performance = float('inf')  # Assuming lower metric is better (e.g., loss)
+
+        # Read the evaluation file and find the metrics for the current round
+        with open(evaluation_file_path, 'r') as file:
+            lines = file.readlines()
+
+        # Locate the round's metrics in the file
+        round_found = False
+        for line in lines:
+            if f"Round {server_round}" in line:
+                round_found = True
+                continue
+            if round_found and "Group" in line:
+                # Parse the line to extract group index and performance metric
+                parts = line.strip().split(":")
+                group = int(parts[0].replace("Group-", "").strip())
+                performance = float(parts[1].strip())
+
+                # Update best cluster if this group has better performance
+                if performance < best_performance:
+                    best_performance = performance
+                    best_cluster = group
+            elif round_found and line.strip() == "":
+                # End of the current round's section
+                break
+
+        if best_cluster is None:
+            raise ValueError(f"No metrics found for Round {server_round} in {evaluation_file_path}")
+
+        return best_cluster - 1, best_performance  # Adjust cluster index to match 0-based indexing
+
+
+    def _select_best_model_and_save(self, server_round: int):
+        """Select the best-performing model based on evaluation loss and save it as the global model."""
+        evaluation_file_path = os.path.join(self.results_subfolder, "evaluation_loss.txt")
+        best_cluster, best_performance = self._select_best_model(server_round, evaluation_file_path)
+
+        print(f"Best model selected from Cluster-{best_cluster} with performance: {best_performance:.4f}")
+
+        # Use the best cluster model and save it as the global model
+        best_model_parameters = self.cluster_models[best_cluster]
+        if self.model_type == "Image Anomaly Detection":
+            global_net = SparseAutoencoder()
+        elif self.model_type == "Image Classification":
+            global_net = MobileNetV3()
+
+        state_dict = aggregated_parameters_to_state_dict(parameters_to_ndarrays(best_model_parameters), self.model_type)
+        global_net.load_state_dict(state_dict)
+
+        # Save the best-performing model with a specific name
+        best_model_path = os.path.join(self.results_subfolder, "best_cluster_model.pth")
+        torch.save(global_net.state_dict(), best_model_path)
+        print(f"Best cluster model saved as {best_model_path}.")
+
+
+
     def aggregate_evaluate(
         self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
         failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes], BaseException]]
     ) -> Tuple[Optional[float], Dict[str, fl.common.Scalar]]:
-        """Aggregate evaluation results and save metrics, supporting dynamic grouping."""
-
+        """Aggregate evaluation results, save metrics, and select the best-performing model."""
+        
         if not results:
             return None, {}
 
@@ -400,12 +423,11 @@ class FedCustom(Strategy):
             else:
                 file.write(f"Aggregated Metric: {aggregated_metric:.4f}\n")
 
-        # Save cluster assignments only if dynamic grouping is enabled
+        # Save the best-performing model as the global model after evaluation
         if self.dynamic_grouping == 1:
-            self._save_cluster_assignments(results, self.cluster_labels, server_round)
+            self._select_best_model_and_save(server_round)
 
         return aggregated_metric, {}
-
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters
@@ -423,13 +445,18 @@ class FedCustom(Strategy):
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
 
-    def detect_potential_poisoned_client(self, server_round: int, global_model, local_updates):
-        """Detect the client with potentially poisoned data and save the results using CosDefense."""
+    def detect_potential_poisoned_client(self, server_round: int, local_updates):
+        # Load the best cluster model (only for classification)
+        best_model_path = os.path.join(self.results_subfolder, "best_cluster_model.pth")
+        if self.model_type != "Image Classification":
+            raise ValueError("Poison detection is only supported for Image Classification.")
 
-        # Extract the last layer of the global model
-        global_last_layer = next(reversed(global_model.state_dict().values()))
+        # Initialize the model and load the best model's state
+        best_model = MobileNetV3()
+        best_model.load_state_dict(torch.load(best_model_path))
+        best_last_layer = next(reversed(best_model.state_dict().values()))  # Extract the last layer of the best cluster model
 
-        # Extract local updates
+        # Extract local updates and compute cosine similarity
         client_scores = {}
         for update in local_updates:
             client_id = update["client_id"]
@@ -438,7 +465,7 @@ class FedCustom(Strategy):
 
             # Compute cosine similarity
             local_last_layer = next(reversed(local_model_state.values()))
-            similarity = cosine_similarity(global_last_layer.reshape(1, -1), local_last_layer.reshape(1, -1))[0][0]
+            similarity = cosine_similarity(best_last_layer.reshape(1, -1), local_last_layer.reshape(1, -1))[0][0]
             client_scores[client_id] = similarity
 
         # Identify the client with the lowest similarity score
@@ -452,7 +479,6 @@ class FedCustom(Strategy):
             log_file.write(f"Similarity Scores: {client_scores}\n")
 
         print(f"Detection results saved for round {server_round} in {poisoned_log_path}.")
-
 
 def aggregated_parameters_to_state_dict(aggregated_parameters, model_type):
     """Convert aggregated parameters to a state dictionary based on model type."""
