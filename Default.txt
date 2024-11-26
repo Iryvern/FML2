@@ -1,7 +1,7 @@
 dataset_folder=F:\AI Stuff\FML\Sem2\Code\cars
 train_test_split=0.9
 seed=42
-num_clients=6
+num_clients=5
 lr=0.001
 factor=0.5
 patience=3
