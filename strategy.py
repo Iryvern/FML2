@@ -96,9 +96,7 @@ class FedCustom(Strategy):
         ndarrays = get_parameters(net)
         return fl.common.ndarrays_to_parameters(ndarrays)
 
-    def configure_fit(
-        self, server_round: int, parameters: Parameters, client_manager: ClientManager
-    ) -> List[Tuple[fl.server.client_proxy.ClientProxy, FitIns]]:
+    def configure_fit(self, server_round: int, parameters: Parameters, client_manager: ClientManager) -> List[Tuple[fl.server.client_proxy.ClientProxy, FitIns]]:
         """Configure the next round of training with optional dynamic grouping."""
         num_clients = len(client_manager)
         if num_clients < self.min_fit_clients:
@@ -111,11 +109,16 @@ class FedCustom(Strategy):
         fit_configurations = []
         for client in clients:
             client_id = int(client.cid)
-            
+
             # Apply dynamic grouping logic only if enabled
-            if self.dynamic_grouping == 1 and server_round > 1 and hasattr(self, 'cluster_labels') and self.cluster_labels is not None:
-                cluster = self.cluster_labels[client_id % len(self.cluster_labels)]
-                cluster_parameters = self.cluster_models[cluster]
+            if self.dynamic_grouping == 1 and server_round > 1:
+                # Ensure client_cluster_mapping is initialized and client_id exists in the mapping
+                if hasattr(self, 'client_cluster_mapping') and client_id in self.client_cluster_mapping:
+                    cluster = self.client_cluster_mapping[client_id]
+                    cluster_parameters = self.cluster_models[cluster]
+                else:
+                    # If client_id is not in the mapping, use default parameters
+                    cluster_parameters = parameters
             else:
                 cluster_parameters = parameters
 
@@ -140,18 +143,25 @@ class FedCustom(Strategy):
                 cluster_labels = kmeans.fit_predict(similarity_matrix)
                 self.cluster_labels = cluster_labels  # Save the new cluster labels for use in subsequent rounds
 
-                # Sort the client IDs to maintain consistency in cluster assignment
-                self.sorted_client_ids = sorted(range(num_models))
+                # Save the mapping of client IDs to cluster labels for consistency
+                self.client_cluster_mapping = {i: cluster_labels[i] for i in range(num_models)}
             else:
                 # Use previously stored cluster labels if not clustering round
                 cluster_labels = self.cluster_labels
                 if cluster_labels is None:
                     raise ValueError("Cluster labels not initialized.")
 
+                # Ensure client_cluster_mapping is initialized correctly
+                if not hasattr(self, 'client_cluster_mapping') or len(self.client_cluster_mapping) < num_models:
+                    self.client_cluster_mapping = {i: cluster_labels[i] for i in range(num_models)}
+
+                # Use the saved client-cluster mapping to ensure consistency
+                cluster_labels = np.array([self.client_cluster_mapping.get(i, cluster_labels[i]) for i in range(num_models)])
+
             # Aggregate parameters within each cluster
             aggregated_parameters = []
             for cluster in range(self.num_clusters):
-                cluster_parameters = [parameters_list[i] for i in self.sorted_client_ids if cluster_labels[i] == cluster]
+                cluster_parameters = [parameters_list[i] for i in range(num_models) if cluster_labels[i] == cluster]
                 if cluster_parameters:
                     cluster_aggregated_parameters = [np.mean(np.array(param_tuple), axis=0) for param_tuple in zip(*cluster_parameters)]
                     aggregated_parameters.append(cluster_aggregated_parameters)
@@ -171,7 +181,12 @@ class FedCustom(Strategy):
         return final_aggregated_parameters, cluster_labels
 
 
+
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
+        """Save the cluster assignments for each client in a single file with fixed client IDs assigned to clusters."""
+        if self.dynamic_grouping != 1 or cluster_labels is None:
+            return  # Skip saving if dynamic grouping is not enabled or cluster_labels is None.
+
         # Define the path to save cluster assignments
         cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
         cluster_assignment_txt_path = os.path.join(self.results_subfolder, 'cluster_assignments.txt')
@@ -179,22 +194,26 @@ class FedCustom(Strategy):
         # Extract client IDs
         client_ids = [client.cid for client, _ in results]
 
-        # Save to the HDF5 file
+        # Update the client-cluster mapping with fixed client assignments
+        if server_round == 1 or server_round % self.clustering_frequency == 0:
+            self.client_cluster_mapping = {client_id: cluster_labels[idx] for idx, client_id in enumerate(client_ids)}
+
+        # Save the client-cluster mapping to the HDF5 file
         with h5py.File(cluster_assignment_file_path, 'a') as f:
             if str(server_round) not in f:
                 grp = f.create_group(str(server_round))
                 grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
-                grp.create_dataset("cluster_labels", data=np.array(cluster_labels, dtype='i'))
+                grp.create_dataset("cluster_labels", data=np.array([self.client_cluster_mapping[cid] for cid in client_ids], dtype='i'))
             else:
                 grp = f[str(server_round)]
                 grp["client_ids"][:] = np.array(client_ids, dtype='i')
-                grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
+                grp["cluster_labels"][:] = np.array([self.client_cluster_mapping[cid] for cid in client_ids], dtype='i')
 
         # Save to the TXT file
         with open(cluster_assignment_txt_path, 'a') as txt_file:
             txt_file.write(f"Server Round {server_round}:\n")
-            for cid, label in zip(client_ids, cluster_labels):
-                txt_file.write(f"Client ID: {cid}, Cluster: {label}\n")
+            for cid in client_ids:
+                txt_file.write(f"Client ID: {cid}, Cluster: {self.client_cluster_mapping[cid]}\n")
             txt_file.write("\n")
 
 
@@ -227,9 +246,7 @@ class FedCustom(Strategy):
         return aggregated_parameters_fl, {}
 
 
-    def configure_evaluate(
-            self, server_round: int, parameters: fl.common.Parameters, client_manager: fl.server.ClientManager
-        ) -> List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateIns]]:
+    def configure_evaluate(self, server_round: int, parameters: fl.common.Parameters, client_manager: fl.server.ClientManager) -> List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateIns]]:
         """Configure evaluation with optional dynamic grouping."""
         
         if self.fraction_evaluate == 0.0:
@@ -240,22 +257,31 @@ class FedCustom(Strategy):
         sample_size, min_num_clients = self.num_evaluation_clients(client_manager.num_available())
         clients = client_manager.sample(num_clients=sample_size, min_num_clients=min_num_clients)
 
-        if self.dynamic_grouping == 1 and server_round > 1 and self.cluster_labels is not None:
+        evaluate_configurations = []
+        for client in clients:
+            client_id = int(client.cid)
+            
             # Assign cluster-specific parameters to clients based on clustering
-            evaluate_configurations = []
-            for client in clients:
-                client_id = client.cid
-                cluster = self.cluster_labels[int(client_id) % len(self.cluster_labels)]
-                cluster_parameters = self.cluster_models[cluster]
-                evaluate_ins = fl.common.EvaluateIns(cluster_parameters, config=config)
-                evaluate_configurations.append((client, evaluate_ins))
-            return evaluate_configurations
+            if self.dynamic_grouping == 1 and server_round > 1:
+                # Ensure client_cluster_mapping is initialized and client_id exists in the mapping
+                if hasattr(self, 'client_cluster_mapping') and client_id in self.client_cluster_mapping:
+                    cluster = self.client_cluster_mapping[client_id]
+                    if cluster in self.cluster_models and self.cluster_models[cluster] is not None:
+                        cluster_parameters = self.cluster_models[cluster]
+                    else:
+                        cluster_parameters = parameters  # Use global parameters if cluster model is not available
+                else:
+                    # If client_id is not in the mapping, use default parameters
+                    cluster_parameters = parameters
+            else:
+                cluster_parameters = parameters
 
-        # Default evaluation configuration
-        evaluate_ins = fl.common.EvaluateIns(parameters, config=config)
-        return [(client, evaluate_ins) for client in clients]
+            evaluate_ins = fl.common.EvaluateIns(cluster_parameters, config=config)
+            evaluate_configurations.append((client, evaluate_ins))
 
-    
+        return evaluate_configurations
+
+
     def log_all_clients_hardware_resources(self, server_round, client_results):
         """Log each client's hardware usage in hardware_resources.ncol and aggregate CPU/GPU for resource_consumption.txt."""
         hardware_file_path = os.path.join(self.results_subfolder, 'hardware_resources.ncol')
