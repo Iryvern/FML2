@@ -138,24 +138,20 @@ class FedCustom(Strategy):
                 similarity_matrix = cosine_similarity(flattened_parameters)
                 kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
                 cluster_labels = kmeans.fit_predict(similarity_matrix)
+                self.cluster_labels = cluster_labels  # Save the new cluster labels for use in subsequent rounds
+
+                # Sort the client IDs to maintain consistency in cluster assignment
+                self.sorted_client_ids = sorted(range(num_models))
             else:
-                # Load cluster labels from the last clustering round if available
-                cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
-                if os.path.exists(cluster_assignment_file_path):
-                    with h5py.File(cluster_assignment_file_path, 'r') as f:
-                        previous_rounds = [int(r) for r in f.keys() if int(r) < server_round]
-                        if previous_rounds:
-                            last_round = max(previous_rounds)
-                            cluster_labels = f[str(last_round)]['cluster_labels'][:]
-                        else:
-                            cluster_labels = np.zeros(num_models, dtype=int)
-                else:
-                    cluster_labels = np.zeros(num_models, dtype=int)
+                # Use previously stored cluster labels if not clustering round
+                cluster_labels = self.cluster_labels
+                if cluster_labels is None:
+                    raise ValueError("Cluster labels not initialized.")
 
             # Aggregate parameters within each cluster
             aggregated_parameters = []
             for cluster in range(self.num_clusters):
-                cluster_parameters = [parameters_list[i] for i in range(num_models) if cluster_labels[i] == cluster]
+                cluster_parameters = [parameters_list[i] for i in self.sorted_client_ids if cluster_labels[i] == cluster]
                 if cluster_parameters:
                     cluster_aggregated_parameters = [np.mean(np.array(param_tuple), axis=0) for param_tuple in zip(*cluster_parameters)]
                     aggregated_parameters.append(cluster_aggregated_parameters)
@@ -176,39 +172,31 @@ class FedCustom(Strategy):
 
 
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
-        """Save the cluster assignments for each client in a single file with sorted client IDs."""
-        if self.dynamic_grouping != 1 or cluster_labels is None:
-            return  # Skip saving if dynamic grouping is not enabled or cluster_labels is None.
-
+        # Define the path to save cluster assignments
         cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
-        consolidated_log_path = os.path.join(self.results_subfolder, "cluster_assignments.txt")
+        cluster_assignment_txt_path = os.path.join(self.results_subfolder, 'cluster_assignments.txt')
+
+        # Extract client IDs
         client_ids = [client.cid for client, _ in results]
 
-        # Combine client IDs and cluster labels, then sort by client ID
-        sorted_assignments = sorted(zip(client_ids, cluster_labels), key=lambda x: int(x[0]))
-
-        # Separate sorted client IDs and cluster labels
-        sorted_client_ids, sorted_cluster_labels = zip(*sorted_assignments)
-
-        # Save cluster assignments in the HDF5 file
+        # Save to the HDF5 file
         with h5py.File(cluster_assignment_file_path, 'a') as f:
             if str(server_round) not in f:
                 grp = f.create_group(str(server_round))
-                grp.create_dataset("client_ids", data=np.array(sorted_client_ids, dtype='i'))
-                grp.create_dataset("cluster_labels", data=np.array(sorted_cluster_labels, dtype='i'))
+                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
+                grp.create_dataset("cluster_labels", data=np.array(cluster_labels, dtype='i'))
             else:
                 grp = f[str(server_round)]
-                grp["client_ids"][:] = np.array(sorted_client_ids, dtype='i')
-                grp["cluster_labels"][:] = np.array(sorted_cluster_labels, dtype='i')
+                grp["client_ids"][:] = np.array(client_ids, dtype='i')
+                grp["cluster_labels"][:] = np.array(cluster_labels, dtype='i')
 
-        # Append sorted cluster assignments to a single text file
-        with open(consolidated_log_path, 'a') as log_file:
-            log_file.write(f"\nRound {server_round} Cluster Assignments:\n")
-            log_file.write(f"{'Client ID':<15} {'Cluster Label':<15}\n")
-            for cid, label in sorted_assignments:
-                log_file.write(f"{cid:<15} {label:<15}\n")
+        # Save to the TXT file
+        with open(cluster_assignment_txt_path, 'a') as txt_file:
+            txt_file.write(f"Server Round {server_round}:\n")
+            for cid, label in zip(client_ids, cluster_labels):
+                txt_file.write(f"Client ID: {cid}, Cluster: {label}\n")
+            txt_file.write("\n")
 
-        print(f"Cluster assignments for round {server_round} saved to a consolidated file with sorted client IDs.")
 
 
     def aggregate_fit(
