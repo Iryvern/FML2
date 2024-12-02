@@ -180,8 +180,6 @@ class FedCustom(Strategy):
 
         return final_aggregated_parameters, cluster_labels
 
-
-
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
         """Save the cluster assignments for each client in a single file with fixed client IDs assigned to clusters."""
         if self.dynamic_grouping != 1 or cluster_labels is None:
@@ -191,8 +189,12 @@ class FedCustom(Strategy):
         cluster_assignment_file_path = os.path.join(self.results_subfolder, 'cluster_assignments.h5')
         cluster_assignment_txt_path = os.path.join(self.results_subfolder, 'cluster_assignments.txt')
 
-        # Extract client IDs
+        # Extract and sort client IDs numerically if possible
         client_ids = [client.cid for client, _ in results]
+        try:
+            client_ids = sorted(client_ids, key=lambda x: int(x))
+        except ValueError:
+            client_ids = sorted(client_ids)
 
         # Update the client-cluster mapping with fixed client assignments
         if server_round == 1 or server_round % self.clustering_frequency == 0:
@@ -202,19 +204,20 @@ class FedCustom(Strategy):
         with h5py.File(cluster_assignment_file_path, 'a') as f:
             if str(server_round) not in f:
                 grp = f.create_group(str(server_round))
-                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='i'))
+                grp.create_dataset("client_ids", data=np.array(client_ids, dtype='S'))
                 grp.create_dataset("cluster_labels", data=np.array([self.client_cluster_mapping[cid] for cid in client_ids], dtype='i'))
             else:
                 grp = f[str(server_round)]
-                grp["client_ids"][:] = np.array(client_ids, dtype='i')
+                grp["client_ids"][:] = np.array(client_ids, dtype='S')
                 grp["cluster_labels"][:] = np.array([self.client_cluster_mapping[cid] for cid in client_ids], dtype='i')
 
-        # Save to the TXT file
+        # Save to the TXT file with sorted entries
         with open(cluster_assignment_txt_path, 'a') as txt_file:
             txt_file.write(f"Server Round {server_round}:\n")
             for cid in client_ids:
                 txt_file.write(f"Client ID: {cid}, Cluster: {self.client_cluster_mapping[cid]}\n")
             txt_file.write("\n")
+
 
 
 
