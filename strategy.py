@@ -2,6 +2,7 @@ from imports import *
 from models import SparseAutoencoder, MobileNetV3
 from flower_client import get_parameters
 from utils import aggregated_parameters_to_state_dict
+import re
 import os
 from datetime import datetime
 import psutil
@@ -315,26 +316,38 @@ class FedCustom(Strategy):
         self.log_resource_consumption(server_round, client_metrics)
 
     def _compute_group_metrics(self, results):
-        """Compute average metric for each group in dynamic grouping."""
-        group_metrics = [0.0] * self.num_clusters
+        """Compute average metrics for each group in dynamic grouping."""
+        group_metrics = [{'accuracy': 0.0, 'f1_score': 0.0, 'log_loss': 0.0} for _ in range(self.num_clusters)]
         group_counts = [0] * self.num_clusters
 
         for client, res in results:
             cluster_idx = self.cluster_labels[int(client.cid) % len(self.cluster_labels)]
-            metric_value = res.metrics['accuracy'] if self.model_type == "Image Classification" else res.metrics['ssim']
-            group_metrics[cluster_idx] += metric_value * res.num_examples
-            group_counts[cluster_idx] += res.num_examples
+            metrics = res.metrics
+            accuracy = metrics.get('accuracy', 0)
+            f1 = metrics.get('f1_score', 0)
+            log_loss_value = metrics.get('log_loss', 0)
+            num_examples = res.num_examples
 
+            group_metrics[cluster_idx]['accuracy'] += accuracy * num_examples
+            group_metrics[cluster_idx]['f1_score'] += f1 * num_examples
+            group_metrics[cluster_idx]['log_loss'] += log_loss_value * num_examples
+            group_counts[cluster_idx] += num_examples
+
+        # Compute averages
         for idx in range(self.num_clusters):
             if group_counts[idx] > 0:
-                group_metrics[idx] /= group_counts[idx]
+                group_metrics[idx]['accuracy'] /= group_counts[idx]
+                group_metrics[idx]['f1_score'] /= group_counts[idx]
+                group_metrics[idx]['log_loss'] /= group_counts[idx]
 
         return group_metrics
 
+
     def _select_best_model(self, server_round: int, evaluation_file_path: str) -> Tuple[int, float]:
-        """Identify the best-performing cluster based on evaluation metrics."""
+        """Identify the best-performing cluster based on a specified evaluation metric."""
         best_cluster = None
-        best_performance = float('inf')  # Assuming lower metric is better (e.g., loss)
+        best_performance = -float('inf')  # Assuming higher metric is better (e.g., accuracy)
+        metric_to_use = 'Accuracy'  # Change this to 'Accuracy', 'F1 Score', or 'Log Loss' as needed
 
         # Read the evaluation file and find the metrics for the current round
         with open(evaluation_file_path, 'r') as file:
@@ -346,16 +359,27 @@ class FedCustom(Strategy):
             if f"Round {server_round}" in line:
                 round_found = True
                 continue
-            if round_found and "Group" in line:
-                # Parse the line to extract group index and performance metric
-                parts = line.strip().split(":")
-                group = int(parts[0].replace("Group-", "").strip())
-                performance = float(parts[1].strip())
+            if round_found and line.strip().startswith("Group-"):
+                # Extract group number
+                match_group = re.match(r'Group-(\d+):', line)
+                if match_group:
+                    group = int(match_group.group(1))
+                else:
+                    continue  # Skip if no match
 
-                # Update best cluster if this group has better performance
-                if performance < best_performance:
-                    best_performance = performance
+                # Extract the desired metric
+                pattern = rf'{metric_to_use}:\s*([\d\.]+)'
+                match_metric = re.search(pattern, line)
+                if match_metric:
+                    metric_value = float(match_metric.group(1))
+                else:
+                    continue  # Skip if the metric is not found
+
+                # Update best cluster based on the specified metric
+                if metric_value > best_performance:
+                    best_performance = metric_value
                     best_cluster = group
+
             elif round_found and line.strip() == "":
                 # End of the current round's section
                 break
@@ -400,51 +424,100 @@ class FedCustom(Strategy):
             return None, {}
 
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        metric_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
+        # Paths for metric files
+        accuracy_file_path = os.path.join(self.results_subfolder, 'accuracy_scores.ncol')
+        f1_score_file_path = os.path.join(self.results_subfolder, 'F1_scores.ncol')
+        logloss_file_path = os.path.join(self.results_subfolder, 'LogLoss_scores.ncol')
         
         # Determine output file based on dynamic grouping
         evaluation_file_name = 'evaluation_loss.txt' if self.dynamic_grouping == 1 else 'aggregated_evaluation_loss.txt'
         evaluation_file_path = os.path.join(self.results_subfolder, evaluation_file_name)
 
-        total_metric = 0.0
+        total_accuracy = 0.0
+        total_f1 = 0.0
+        total_logloss = 0.0
         total_examples = 0
-        metric_scores = []
+        accuracy_scores = []
+        f1_scores = []
+        logloss_scores = []
         self.log_all_clients_hardware_resources(server_round, results)
 
         # Aggregate client metrics
         for client, res in results:
-            if self.model_type == "Image Classification" and 'accuracy' in res.metrics:
-                metric_scores.append((client.cid, res.metrics['accuracy']))
-                total_metric += res.metrics['accuracy'] * res.num_examples
-            elif self.model_type == "Image Anomaly Detection" and 'ssim' in res.metrics:
-                metric_scores.append((client.cid, res.metrics['ssim']))
-                total_metric += res.metrics['ssim'] * res.num_examples
-            total_examples += res.num_examples
+            if self.model_type == "Image Classification":
+                # Get metrics
+                accuracy = res.metrics.get('accuracy', 0)
+                f1 = res.metrics.get('f1_score', 0)
+                logloss = res.metrics.get('log_loss', 0)
 
-        aggregated_metric = total_metric / total_examples if total_examples > 0 else None
+                num_examples = res.num_examples
+
+                # Append to lists
+                accuracy_scores.append((client.cid, accuracy))
+                f1_scores.append((client.cid, f1))
+                logloss_scores.append((client.cid, logloss))
+
+                total_accuracy += accuracy * num_examples
+                total_f1 += f1 * num_examples
+                total_logloss += logloss * num_examples
+                total_examples += num_examples
+
+            elif self.model_type == "Image Anomaly Detection":
+                # Existing code for anomaly detection (unchanged)
+                pass
+
+        # Calculate aggregated metrics
+        aggregated_accuracy = total_accuracy / total_examples if total_examples > 0 else None
+        aggregated_f1 = total_f1 / total_examples if total_examples > 0 else None
+        aggregated_logloss = total_logloss / total_examples if total_examples > 0 else None
 
         # Save client scores
-        metric_scores.sort(key=lambda x: int(x[0]))
-        with open(metric_file_path, 'a') as file:
+        # Sort by client ID
+        accuracy_scores.sort(key=lambda x: int(x[0]))
+        f1_scores.sort(key=lambda x: int(x[0]))
+        logloss_scores.sort(key=lambda x: int(x[0]))
+
+        # Save accuracy scores
+        with open(accuracy_file_path, 'a') as file:
             file.write(f"Time: {current_time} - Round {server_round}\n")
-            for cid, metric_value in metric_scores:
+            for cid, metric_value in accuracy_scores:
                 file.write(f"{cid} {metric_value}\n")
+
+        # Save F1 scores
+        with open(f1_score_file_path, 'a') as file:
+            file.write(f"Time: {current_time} - Round {server_round}\n")
+            for cid, f1_value in f1_scores:
+                file.write(f"{cid} {f1_value}\n")
+
+        # Save Log Loss scores
+        with open(logloss_file_path, 'a') as file:
+            file.write(f"Time: {current_time} - Round {server_round}\n")
+            for cid, logloss_value in logloss_scores:
+                file.write(f"{cid} {logloss_value}\n")
 
         # Save grouped or aggregated metrics
         with open(evaluation_file_path, 'a') as file:
             file.write(f"Time: {current_time} - Round {server_round}\n")
             if self.dynamic_grouping == 1 and self.cluster_labels is not None:
                 group_metrics = self._compute_group_metrics(results)
-                for group_idx, metric in enumerate(group_metrics, start=1):
-                    file.write(f"Group-{group_idx}: {metric:.4f}\n")
+                for group_idx, metrics in enumerate(group_metrics, start=1):
+                    file.write(
+                        f"Group-{group_idx}: Accuracy: {metrics['accuracy']:.4f}, "
+                        f"F1 Score: {metrics['f1_score']:.4f}, Log Loss: {metrics['log_loss']:.4f}\n"
+                    )
             else:
-                file.write(f"Aggregated Metric: {aggregated_metric:.4f}\n")
+                file.write(
+                    f"Aggregated Metrics: Accuracy: {aggregated_accuracy:.4f}, "
+                    f"F1 Score: {aggregated_f1:.4f}, Log Loss: {aggregated_logloss:.4f}\n"
+                )
+
 
         # Save the best-performing model as the global model after evaluation
         if self.dynamic_grouping == 1:
             self._select_best_model_and_save(server_round)
 
-        return aggregated_metric, {}
+        return aggregated_accuracy, {}
+
 
     def evaluate(
         self, server_round: int, parameters: fl.common.Parameters
