@@ -255,8 +255,8 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
     else:
         print("Unrecognized model type for transformation")
 
-    data_split = [0.2, 0.2, 0.2, 0.2, 0.2]
-    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type, data_split)
+    data_split = [0.30, 0.05, 0.025, 0.05, 0.10, 0.025, 0.05, 0.15, 0.05, 0.20]
+    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type, 9, data_split)
 
     strategy = FedCustom(
         initial_lr=initial_lr, 

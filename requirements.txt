@@ -1,0 +1,11 @@
+python==3.12.4
+flwr==1.8.0
+gradio==4.44
+h5py
+matplotlib
+torch==2.4.1+cu121
+pandas
+GPUtil
+psutil
+scikit-image
+scikit-learn

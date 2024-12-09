@@ -58,6 +58,7 @@ def load_datasets(
     train_transform,
     test_transform,
     model_type: str,
+    num_poisoned_clients: int,  # Number of clients to poison
     data_split: List[float] = None,
 ):
     # Load configuration from the Default.txt file
@@ -113,16 +114,18 @@ def load_datasets(
 
     datasets = random_split(trainset, lengths, generator=torch.Generator().manual_seed(42))
 
-    # Apply poisoning to the first client's dataset if poison_value is set
+    # Apply poisoning to the specified number of clients if poison_value is set
     if poison_value > 0.0:
-        num_poisoned_samples = int(len(datasets[0]) * poison_value)
-        print(f"Applying poisoning to {poison_value * 100:.1f}% of the data for the first client ({num_poisoned_samples} samples)...")
-        datasets[0] = poison_subset(datasets[0], poison_value)
+        for client_idx in range(num_poisoned_clients):
+            if client_idx < len(datasets):
+                num_poisoned_samples = int(len(datasets[client_idx]) * poison_value)
+                print(f"Applying poisoning to {poison_value * 100:.1f}% of the data for client {client_idx} ({num_poisoned_samples} samples)...")
+                datasets[client_idx] = poison_subset(datasets[client_idx], poison_value)
 
     # Print the split information for debugging
     print("Data split among clients (number of samples per client):")
     for idx, length in enumerate(lengths):
-        poisoned = "*" if idx == 0 and poison_value > 0 else ""
+        poisoned = "*" if idx < num_poisoned_clients and poison_value > 0 else ""
         print(f"  Client {idx + 1}: {length} samples {poisoned}")
 
     # Create DataLoaders

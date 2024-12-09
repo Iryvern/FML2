@@ -22,9 +22,6 @@ def read_default_values():
 metrics_to_plot = ['CPU', 'GPU']
 
 def plot_hardware_resource_consumption(file_path: str):
-    import matplotlib.pyplot as plt
-    import tempfile
-
     client_metrics = {}
 
     with open(file_path, 'r') as file:
