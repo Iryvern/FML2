@@ -185,7 +185,7 @@ def setup_gradio_ui():
                 evaluation_table = gr.DataFrame(headers=["Round", "Learning Rate (LR)", "Metric"], visible=False)
 
                 def update_performance(folder_name):
-                    evaluation_df = read_aggregated_evaluation_data(folder_name)
+                    evaluation_df = read_evaluation_data(folder_name)
                     plot_image_path = plot_metric_scores(folder_name)
                     
                     return gr.update(value=evaluation_df, visible=True), plot_image_path

@@ -5,6 +5,7 @@ import psutil
 import GPUtil
 import matplotlib.pyplot as plt
 import tempfile
+import re
 
 default_file_path = "Default.txt"
 
@@ -184,29 +185,63 @@ def read_resource_data(folder_name):
     else:
         return pd.DataFrame()
 
-def read_aggregated_evaluation_data(folder_name):
-    file_path = os.path.join('results', folder_name, 'aggregated_evaluation_loss.txt')
-    data = {"Round": [], "Learning Rate (LR)": [], "Aggregated Test Metric": []}
-    if os.path.exists(file_path):
-        metric_label = "Aggregated Test Accuracy" if "Image Classification" in folder_name else "Aggregated Test SSIM"
+def read_evaluation_data(folder_name):
+    """Read evaluation data from 'aggregated_evaluation_loss.txt' and 'evaluation_loss.txt'."""
+    aggregated_file_path = os.path.join('results', folder_name, 'aggregated_evaluation_loss.txt')
+    grouped_file_path = os.path.join('results', folder_name, 'evaluation_loss.txt')
+    data = {
+        "Round": [],
+        "Type": [],
+        "Group": [],
+        "Accuracy": [],
+        "F1 Score": [],
+        "Log Loss": []
+    }
+
+    # Process 'aggregated_evaluation_loss.txt'
+    if os.path.exists(aggregated_file_path):
         try:
-            with open(file_path, 'r') as file:
+            with open(aggregated_file_path, 'r') as file:
                 lines = file.readlines()
                 for line in lines:
-                    if "Round" in line and "LR" in line:
-                        parts = line.strip().split(' - ')
-                        round_number = int(parts[1].split(' ')[1])
-                        lr = float(parts[2].split(' ')[1])
+                    if "Round" in line:
+                        round_number = int(line.split('- Round ')[1].strip())
+                    elif "Aggregated Metrics" in line:
+                        metrics = line.split(':', 1)[1].split(',')
+                        accuracy = float(metrics[0].split(' ')[-1])
+                        f1_score = float(metrics[1].split(' ')[-1])
+                        log_loss = float(metrics[2].split(' ')[-1])
                         data["Round"].append(round_number)
-                        data["Learning Rate (LR)"].append(lr)
-                    elif metric_label in line:
-                        metric_value = float(line.strip().split(' ')[-1])
-                        data["Aggregated Test Metric"].append(metric_value)
-            return pd.DataFrame(data)
+                        data["Type"].append("Aggregated")
+                        data["Group"].append(None)  # No specific group for aggregated metrics
+                        data["Accuracy"].append(accuracy)
+                        data["F1 Score"].append(f1_score)
+                        data["Log Loss"].append(log_loss)
         except Exception as e:
-            print(f"Error reading file {file_path}: {e}")
-            return pd.DataFrame()
-    else:
-        return pd.DataFrame()
+            print(f"Error reading file {aggregated_file_path}: {e}")
 
-default_values = read_default_values()
+    # Process 'evaluation_loss.txt'
+    if os.path.exists(grouped_file_path):
+        try:
+            with open(grouped_file_path, 'r') as file:
+                lines = file.readlines()
+                for line in lines:
+                    if "Round" in line:
+                        round_number = int(line.split('- Round ')[1].strip())
+                    elif "Group" in line:
+                        group_number = int(line.split(':')[0].split('-')[1].strip())
+                        metrics = line.split(':', 1)[1].split(',')
+                        accuracy = float(metrics[0].split(' ')[-1])
+                        f1_score = float(metrics[1].split(' ')[-1])
+                        log_loss = float(metrics[2].split(' ')[-1])
+                        data["Round"].append(round_number)
+                        data["Type"].append("Grouped")
+                        data["Group"].append(group_number)
+                        data["Accuracy"].append(accuracy)
+                        data["F1 Score"].append(f1_score)
+                        data["Log Loss"].append(log_loss)
+        except Exception as e:
+            print(f"Error reading file {grouped_file_path}: {e}")
+
+    return pd.DataFrame(data)
+
