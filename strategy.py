@@ -128,7 +128,7 @@ class FedCustom(Strategy):
         return fit_configurations
 
     def aggregate_parameters(self, parameters_list: List[List[np.ndarray]], server_round: int) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
-        """Aggregate model parameters with optional dynamic grouping."""
+        """Aggregate model parameters with optional dynamic grouping and dynamic thresholding."""
         num_models = len(parameters_list)
         cluster_labels = None
 
@@ -138,10 +138,11 @@ class FedCustom(Strategy):
                 # Flatten the parameter arrays to create a feature vector for each model
                 flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
 
-                # Perform clustering using KMeans based on cosine similarity
+                # Perform clustering using cosine similarity
                 similarity_matrix = cosine_similarity(flattened_parameters)
-                kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
-                cluster_labels = kmeans.fit_predict(similarity_matrix)
+
+                # Dynamically assign clusters
+                cluster_labels = self.assign_clusters_with_dynamic_threshold(similarity_matrix, num_clusters=self.num_clusters)
                 self.cluster_labels = cluster_labels  # Save the new cluster labels for use in subsequent rounds
 
                 # Save the mapping of client IDs to cluster labels for consistency
@@ -180,6 +181,54 @@ class FedCustom(Strategy):
             final_aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
 
         return final_aggregated_parameters, cluster_labels
+
+    def assign_clusters_with_dynamic_threshold(self, similarity_matrix, num_clusters=3):
+        """
+        Dynamically assign clusters based on cosine similarity and a dynamic threshold
+        while ensuring exactly `num_clusters` clusters.
+        
+        Args:
+            similarity_matrix (np.ndarray): Pairwise cosine similarity matrix.
+            num_clusters (int): Number of clusters to form (default: 3).
+        
+        Returns:
+            np.ndarray: Array of cluster labels for each client.
+        """
+        num_clients = similarity_matrix.shape[0]
+        
+        # Calculate average similarity for each client
+        avg_similarities = np.mean(similarity_matrix, axis=1)
+        
+        # Determine dynamic threshold (e.g., lower quartile for detecting outliers)
+        min_similarity_threshold = np.percentile(avg_similarities, 25)  # Adjust sensitivity if needed
+        
+        # Identify low-similarity (potentially outlier) clients
+        outlier_indices = np.where(avg_similarities < min_similarity_threshold)[0]
+        normal_indices = np.where(avg_similarities >= min_similarity_threshold)[0]
+        
+        # If all clients are similar, use KMeans to split evenly
+        if len(outlier_indices) == 0 or len(outlier_indices) == num_clients:
+            kmeans = KMeans(n_clusters=num_clusters, random_state=0, n_init="auto")
+            cluster_labels = kmeans.fit_predict(similarity_matrix)
+            return cluster_labels
+
+        # Assign clusters
+        cluster_labels = np.zeros(num_clients, dtype=int)
+
+        # Outliers get their own cluster (e.g., Cluster 0)
+        cluster_labels[outlier_indices] = 0
+
+        # Normal clients are split into remaining clusters using KMeans
+        if len(normal_indices) > 0:
+            normal_client_similarities = similarity_matrix[normal_indices][:, normal_indices]
+            kmeans = KMeans(n_clusters=num_clusters - 1, random_state=0, n_init="auto")
+            normal_clusters = kmeans.fit_predict(normal_client_similarities)
+            # Map normal client clusters to the available cluster range (1 to num_clusters-1)
+            for idx, cluster in zip(normal_indices, normal_clusters):
+                cluster_labels[idx] = cluster + 1
+
+        return cluster_labels
+
 
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
         """Save the cluster assignments for each client in a single file with fixed client IDs assigned to clusters."""
