@@ -160,7 +160,7 @@ class FlowerClient(fl.client.Client):
         }
 
 # Flower client function
-def client_fn(cid, trainloaders, model_type) -> FlowerClient:
+def client_fn(cid, trainloaders, testloaders, model_type) -> FlowerClient:
     # Initialize model based on model_type
     if model_type == "Image Anomaly Detection":
         net = SparseAutoencoder().to(DEVICE)
@@ -168,6 +168,7 @@ def client_fn(cid, trainloaders, model_type) -> FlowerClient:
         net = MobileNetV3().to(DEVICE)
 
     trainloader = trainloaders[int(cid)]
+    testloader = testloaders[int(cid)]
     optimizer = optim.Adam(net.parameters(), lr=0.001)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
     return FlowerClient(cid, net, trainloader, optimizer, scheduler, model_type, epochs_per_round=3)

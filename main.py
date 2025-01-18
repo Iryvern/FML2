@@ -257,7 +257,7 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
 
     #data_split = [0.30, 0.05, 0.025, 0.05, 0.10, 0.025, 0.05, 0.15, 0.05, 0.20]
     data_split = [0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]
-    trainloaders, testloader = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type, 10, data_split)
+    trainloaders, testloaders = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type, 10, data_split)
 
     strategy = FedCustom(
         initial_lr=initial_lr, 
@@ -268,7 +268,7 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
 
     try:
         fl.simulation.start_simulation(
-            client_fn=lambda cid: client_fn(cid, trainloaders, model_type),
+            client_fn=lambda cid: client_fn(cid, trainloaders, testloaders, model_type),
             num_clients=num_clients, 
             config=fl.server.ServerConfig(num_rounds=num_rounds), 
             strategy=strategy, 

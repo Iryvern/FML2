@@ -92,13 +92,19 @@ def load_datasets(
 
     # Partition training set across clients
     train_len = len(trainset)
+    test_len = len(testset)
     
     if data_split is None:
         # Default: Evenly split the data among clients
-        partition_size = train_len // num_clients
-        lengths = [partition_size] * num_clients
+        train_partition_size = train_len // num_clients
+        train_lengths = [train_partition_size] * num_clients
         if train_len % num_clients != 0:
-            lengths[-1] += train_len % num_clients
+            train_lengths[-1] += train_len % num_clients
+
+        test_partition_size = test_len // num_clients
+        test_lengths = [test_partition_size] * num_clients
+        if test_len % num_clients != 0:
+            test_lengths[-1] += test_len % num_clients
     else:
         # Validate the custom data_split
         if sum(data_split) > 1.0:
@@ -107,32 +113,37 @@ def load_datasets(
             raise ValueError("Length of data_split must match the number of clients.")
 
         # Compute the lengths for each client
-        lengths = [int(train_len * fraction) for fraction in data_split]
-        # Adjust for any remaining data due to rounding
-        if sum(lengths) < train_len:
-            lengths[-1] += train_len - sum(lengths)
+        train_lengths = [int(train_len * fraction) for fraction in data_split]
+        test_lengths = [int(test_len * fraction) for fraction in data_split]
 
-    datasets = random_split(trainset, lengths, generator=torch.Generator().manual_seed(42))
+        # Adjust for any remaining data due to rounding
+        if sum(train_lengths) < train_len:
+            train_lengths[-1] += train_len - sum(train_lengths)
+        if sum(test_lengths) < test_len:
+            test_lengths[-1] += test_len - sum(test_lengths)
+
+    train_datasets = random_split(trainset, train_lengths, generator=torch.Generator().manual_seed(42))
+    test_datasets = random_split(testset, test_lengths, generator=torch.Generator().manual_seed(42))
 
     # Apply poisoning to the specified number of clients if poison_value is set
     if poison_value > 0.0:
         for client_idx in range(num_poisoned_clients):
-            if client_idx < len(datasets):
-                num_poisoned_samples = int(len(datasets[client_idx]) * poison_value)
+            if client_idx < len(train_datasets):
+                num_poisoned_samples = int(len(train_datasets[client_idx]) * poison_value)
                 print(f"Applying poisoning to {poison_value * 100:.1f}% of the data for client {client_idx} ({num_poisoned_samples} samples)...")
-                datasets[client_idx] = poison_subset(datasets[client_idx], poison_value)
+                train_datasets[client_idx] = poison_subset(train_datasets[client_idx], poison_value)
 
     # Print the split information for debugging
     print("Data split among clients (number of samples per client):")
-    for idx, length in enumerate(lengths):
+    for idx, (train_length, test_length) in enumerate(zip(train_lengths, test_lengths)):
         poisoned = "*" if idx < num_poisoned_clients and poison_value > 0 else ""
-        print(f"  Client {idx + 1}: {length} samples {poisoned}")
+        print(f"  Client {idx + 1}: {train_length} train samples, {test_length} test samples {poisoned}")
 
     # Create DataLoaders
-    trainloaders = [DataLoader(ds, batch_size=64, shuffle=True) for ds in datasets]
-    testloader = DataLoader(testset, batch_size=64, shuffle=False)
+    trainloaders = [DataLoader(ds, batch_size=64, shuffle=True) for ds in train_datasets]
+    testloaders = [DataLoader(ds, batch_size=64, shuffle=True) for ds in test_datasets]
 
-    return trainloaders, testloader
+    return trainloaders, testloaders
 
 
 def poison_subset(subset: torch.utils.data.Subset, poison_percentage: float) -> torch.utils.data.Subset:
