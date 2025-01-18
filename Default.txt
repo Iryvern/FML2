@@ -13,6 +13,6 @@ num_rounds=40
 num_cpus=1
 num_gpus=0.8
 model_type=Image Classification
-poison_percentage=0
+poison_percentage=100
 dynamic_grouping=1
 clustering_frequency=5

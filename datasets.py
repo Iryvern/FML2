@@ -157,8 +157,12 @@ def poison_subset(subset: torch.utils.data.Subset, poison_percentage: float) -> 
     # Apply poisoning by assigning a random value between min and max (inclusive)
     for idx in indices_to_poison:
         img_name = dataset.images[indices[idx]]
-        new_class_id = torch.randint(min_class_id, max_class_id + 1, (1,)).item()  # Correct range is [min, max+1)
+        original_class_id = dataset.labels_df.loc[dataset.labels_df['frame'] == img_name, 'class_id'].values[0]
+        new_class_id = original_class_id
+        while new_class_id == original_class_id:
+            new_class_id = torch.randint(min_class_id, max_class_id + 1, (1,)).item()
         dataset.labels_df.loc[dataset.labels_df['frame'] == img_name, 'class_id'] = new_class_id
+
 
     # Update the labels dictionary
     dataset.labels = {row['frame']: row['class_id'] for _, row in dataset.labels_df.iterrows()}
