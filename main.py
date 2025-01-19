@@ -214,7 +214,7 @@ def setup_gradio_ui():
 
 def start_training(dataset_folder, train_test_split, seed, num_clients, 
                    lr, factor, patience, epochs_per_round,
-                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type,data_poisoning_percentage, dynamic_grouping_enabled, clustering_frequency):
+                   initial_lr, step_size, gamma, num_rounds, num_cpus, num_gpus, model_type, data_poisoning_percentage, dynamic_grouping_enabled, clustering_frequency):
 
     train_test_split = float(train_test_split)
     seed = int(seed)
@@ -257,7 +257,7 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
 
     #data_split = [0.30, 0.05, 0.025, 0.05, 0.10, 0.025, 0.05, 0.15, 0.05, 0.20]
     data_split = [0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]
-    trainloaders, testloaders = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type, 10, data_split)
+    trainloaders, testloaders = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type, 0, data_split)
 
     strategy = FedCustom(
         initial_lr=initial_lr, 

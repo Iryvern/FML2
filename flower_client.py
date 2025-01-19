@@ -22,14 +22,16 @@ def get_parameters(net) -> list[np.ndarray]:
     return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
 class FlowerClient(fl.client.Client):
-    def __init__(self, cid, net, trainloader, optimizer, scheduler, model_type, epochs_per_round):
+    def __init__(self, cid, net, trainloader, testloader, optimizer, scheduler, model_type, epochs_per_round):
         self.cid = cid
         self.net = net
         self.trainloader = trainloader
+        self.testloader = testloader  # Added testloader
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.model_type = model_type
         self.epochs_per_round = epochs_per_round
+
 
     def get_parameters(self, ins: fl.common.GetParametersIns) -> fl.common.GetParametersRes:
         print(f"[Client {self.cid}] get_parameters")
@@ -69,7 +71,7 @@ class FlowerClient(fl.client.Client):
         all_probs = []
 
         with torch.no_grad():
-            for batch in self.trainloader:
+            for batch in self.testloader:  # Updated to use testloader
                 if self.model_type == "Image Classification":
                     images, labels = batch
                     images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -91,6 +93,7 @@ class FlowerClient(fl.client.Client):
                 elif self.model_type == "Image Anomaly Detection":
                     # Existing code for anomaly detection (unchanged)
                     pass
+
 
         # Calculate evaluation metrics
         if self.model_type == "Image Classification":
@@ -171,4 +174,4 @@ def client_fn(cid, trainloaders, testloaders, model_type) -> FlowerClient:
     testloader = testloaders[int(cid)]
     optimizer = optim.Adam(net.parameters(), lr=0.001)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
-    return FlowerClient(cid, net, trainloader, optimizer, scheduler, model_type, epochs_per_round=3)
+    return FlowerClient(cid, net, trainloader, testloader, optimizer, scheduler, model_type, epochs_per_round=3)
