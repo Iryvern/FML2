@@ -10,6 +10,7 @@ import torchvision.transforms.functional as TF
 import torch.optim as optim
 import psutil  # To capture CPU, memory, and network stats
 import GPUtil  # To capture GPU stats
+from torch.optim import AdamW
 
 # Set parameters for the model from a list of NumPy arrays
 def set_parameters(net, parameters: list[np.ndarray], model_type: str):
@@ -172,6 +173,12 @@ def client_fn(cid, trainloaders, testloaders, model_type) -> FlowerClient:
 
     trainloader = trainloaders[int(cid)]
     testloader = testloaders[int(cid)]
-    optimizer = optim.Adam(net.parameters(), lr=0.001)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+
+    # Update optimizer to AdamW with weight decay
+    optimizer = optim.AdamW(net.parameters(), lr=0.0001, weight_decay=1e-4)
+
+    # Update scheduler to CosineAnnealingWarmRestarts for dynamic learning rate adjustment
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9, verbose=True)
+
+    # Return the FlowerClient with the updated optimizer and scheduler
     return FlowerClient(cid, net, trainloader, testloader, optimizer, scheduler, model_type, epochs_per_round=3)
