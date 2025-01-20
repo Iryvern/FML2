@@ -177,8 +177,8 @@ def client_fn(cid, trainloaders, testloaders, model_type) -> FlowerClient:
     # Update optimizer to AdamW with weight decay
     optimizer = optim.AdamW(net.parameters(), lr=0.0001, weight_decay=1e-4)
 
-    # Update scheduler to CosineAnnealingWarmRestarts for dynamic learning rate adjustment
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9, verbose=True)
+    # Update scheduler to ExponentialLR without the verbose parameter
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
 
     # Return the FlowerClient with the updated optimizer and scheduler
     return FlowerClient(cid, net, trainloader, testloader, optimizer, scheduler, model_type, epochs_per_round=3)
