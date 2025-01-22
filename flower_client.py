@@ -174,7 +174,7 @@ def client_fn(cid, trainloaders, testloaders, model_type) -> FlowerClient:
     trainloader = trainloaders[int(cid)]
     testloader = testloaders[int(cid)]
 
-    # Update optimizer to AdamW with weight decay
+    # Update optimizer to AdamW with weight decay d
     optimizer = optim.AdamW(net.parameters(), lr=0.0001)
 
     # Update scheduler to ExponentialLR without the verbose parameter
