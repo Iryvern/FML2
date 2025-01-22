@@ -81,8 +81,8 @@ def load_datasets(
         images_dir = os.path.join(dataset_path, 'images')
         
         # Load dataset files
-        train_labels_file = os.path.join(dataset_path, 'balanced_train.csv')
-        val_labels_file = os.path.join(dataset_path, 'balanced_test.csv')
+        train_labels_file = os.path.join(dataset_path, 'filtered_labels_train.csv')
+        val_labels_file = os.path.join(dataset_path, 'filtered_labels_test.csv')
         
         trainset = SelfDrivingCarDataset(images_dir=images_dir, labels_file=train_labels_file, transform=train_transform)
         testset = SelfDrivingCarDataset(images_dir=images_dir, labels_file=val_labels_file, transform=test_transform)
