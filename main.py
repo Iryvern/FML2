@@ -243,12 +243,12 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
         ])
     elif model_type == "Image Classification":
         train_transform = transforms.Compose([
-            transforms.Resize((224, 224)),  
+            transforms.Resize((480, 300)),  # Resize to 480x300
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize for 3 channels (RGB)
         ])
         test_transform = transforms.Compose([
-            transforms.Resize((224, 224)),  
+            transforms.Resize((480, 300)),  # Resize to 480x300
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize for 3 channels (RGB)
         ])

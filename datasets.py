@@ -81,8 +81,8 @@ def load_datasets(
         images_dir = os.path.join(dataset_path, 'images')
         
         # Load dataset files
-        train_labels_file = os.path.join(dataset_path, 'filtered_labels_train.csv')
-        val_labels_file = os.path.join(dataset_path, 'filtered_labels_test.csv')
+        train_labels_file = os.path.join(dataset_path, 'balanced_train.csv')
+        val_labels_file = os.path.join(dataset_path, 'balanced_test.csv')
         
         trainset = SelfDrivingCarDataset(images_dir=images_dir, labels_file=train_labels_file, transform=train_transform)
         testset = SelfDrivingCarDataset(images_dir=images_dir, labels_file=val_labels_file, transform=test_transform)
@@ -179,4 +179,3 @@ def poison_subset(subset: torch.utils.data.Subset, poison_percentage: float) -> 
     dataset.labels = {row['frame']: row['class_id'] for _, row in dataset.labels_df.iterrows()}
 
     return subset
-
