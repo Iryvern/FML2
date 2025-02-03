@@ -13,7 +13,7 @@ def train(net, trainloader, epochs: int, optimizer, model_type):
 
     net.train()  # Set the model to training mode
     for epoch in range(epochs):
-        total_loss = 0.0
+        total_loss = 0.00
         for batch in trainloader:
             # Adjust input and target based on model type
             images, labels = batch if model_type == "Image Classification" else (batch, None)
@@ -44,7 +44,7 @@ def test(net, testloader, model_type):
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
-    total_loss = 0.0
+    total_loss = 0.00
     net.to(DEVICE)
     net.eval()
     with torch.no_grad():
