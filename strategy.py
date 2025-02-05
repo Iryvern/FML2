@@ -71,19 +71,16 @@ class FedCustom(Strategy):
 
         with open(self.resource_consumption_file, 'w') as file:
             file.write(f"Resource Consumption Log\n")
-            file.write(f"CPU (Cores: {cpu_count}), GPU (Model: {gpu_name}, Memory: {total_gpu_memory} MB), Memory (Total: {total_memory} GB), Network (Bytes Sent/Received)\n")
-            file.write("Round, Aggregated CPU Usage (%), Aggregated GPU Usage (%), Avg Memory Usage (%), Avg Network Sent (MB), Avg Network Received (MB)\n")
+            file.write(f"CPU (Cores: {cpu_count}), GPU (Model: {gpu_name}, Memory: {total_gpu_memory} MB), Memory (Total: {total_memory} GB)\n")
+            file.write("Round, Aggregated CPU Usage (%), Aggregated GPU Usage (%)\n")
 
     def log_resource_consumption(self, server_round, client_metrics):
         """Aggregate and log client resource consumption for the round."""
         total_cpu = sum(metric["cpu"] for metric in client_metrics)
         total_gpu = sum(metric["gpu"] for metric in client_metrics)
-        avg_memory = round(sum(metric["memory"] for metric in client_metrics) / len(client_metrics), 3)
-        avg_net_sent = round(sum(metric["net_sent"] for metric in client_metrics) / len(client_metrics), 3)
-        avg_net_received = round(sum(metric["net_received"] for metric in client_metrics) / len(client_metrics), 3)
 
         with open(self.resource_consumption_file, 'a') as file:
-            file.write(f"{server_round}, {round(total_cpu, 3)}, {round(total_gpu, 3)}, {avg_memory}, {avg_net_sent}, {avg_net_received}\n")
+            file.write(f"{server_round}, {round(total_cpu, 3)}, {round(total_gpu, 3)}\n")
 
     def initialize_parameters(self, client_manager: ClientManager) -> Optional[Parameters]:
         """Initialize global model parameters based on the model type."""
@@ -287,33 +284,42 @@ class FedCustom(Strategy):
 
 
     def log_all_clients_hardware_resources(self, server_round, client_results):
-        """Log each client's hardware usage in hardware_resources.ncol and aggregate CPU/GPU for resource_consumption.txt."""
+        """Log each client's hardware usage in hardware_resources.ncol and aggregate CPU/GPU for resource_consumption.txt,
+        ensuring GPU usage does not exceed 100% by scaling if needed.
+        """
         hardware_file_path = os.path.join(self.results_subfolder, 'hardware_resources.ncol')
         client_metrics = []
+        total_gpu_usage = 0
 
         with open(hardware_file_path, 'a') as file:
             file.write(f"Round {server_round}\n")
+            
+            # First pass: Collect GPU usage
             for client, res in client_results:
                 cpu_usage = round(psutil.cpu_percent(interval=1), 3)
                 gpus = GPUtil.getGPUs()
                 gpu_usage = round(gpus[0].load * 100, 3) if gpus else 0
-                memory_usage = round(psutil.virtual_memory().percent, 3)
-                net_io = psutil.net_io_counters()
-                net_sent = round(net_io.bytes_sent / (1024 ** 2), 3)
-                net_received = round(net_io.bytes_recv / (1024 ** 2), 3)
-
+                
+                total_gpu_usage += gpu_usage
                 client_metrics.append({
+                    "client_id": client.cid,
                     "cpu": cpu_usage,
                     "gpu": gpu_usage,
-                    "memory": memory_usage,
-                    "net_sent": net_sent,
-                    "net_received": net_received
                 })
 
-                file.write(f"Client {client.cid}: CPU {cpu_usage}%, GPU {gpu_usage}%, Memory {memory_usage}%, Network Sent: {net_sent}MB, Network Received: {net_received}MB\n")
+            # **Scale down GPU usage if total exceeds 100%**
+            if total_gpu_usage > 100:
+                scale_factor = 100 / total_gpu_usage  # Compute scaling factor
+                for metric in client_metrics:
+                    metric["gpu"] = round(metric["gpu"] * scale_factor, 3)  # Apply scaling
 
-        # After logging each client's data, log the aggregated metrics
+            # Second pass: Log adjusted results
+            for metric in client_metrics:
+                file.write(f"Client {metric['client_id']}: CPU {metric['cpu']}%, GPU {metric['gpu']}%\n")
+
+        # Log aggregated resource usage after scaling
         self.log_resource_consumption(server_round, client_metrics)
+
 
     def _compute_group_metrics(self, results):
         """Compute average metrics for each group in dynamic grouping."""

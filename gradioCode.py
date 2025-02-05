@@ -88,7 +88,11 @@ def plot_hardware_resource_consumption(file_path: str):
 
 def plot_metric_scores(folder_name):
     """Plot either SSIM or Accuracy scores based on model type in the folder name."""
-    if "Image Classification" in folder_name:
+    if folder_name.isdigit():
+        metric_label = "Accuracy"
+        y_label = "Accuracy Score"
+        file_suffix = "accuracy_scores.ncol"
+    elif "Image Classification" in folder_name:
         metric_label = "Accuracy"
         y_label = "Accuracy Score"
         file_suffix = "accuracy_scores.ncol"
@@ -176,7 +180,7 @@ def read_resource_data(folder_name):
     file_path = os.path.join('results', folder_name, 'resource_consumption.txt')
     if os.path.exists(file_path):
         try:
-            column_names = ["Round", "CPU Usage (%)", "GPU Usage (%)", "Memory Usage (%)", "Network Sent (MB)", "Network Received (MB)"]
+            column_names = ["Round", "CPU Usage (%)", "GPU Usage (%)"]
             df = pd.read_csv(file_path, sep=",", names=column_names, skiprows=3)
             return df
         except pd.errors.ParserError as e:
@@ -213,7 +217,7 @@ def read_evaluation_data(folder_name):
                         log_loss = float(metrics[2].split(' ')[-1])
                         data["Round"].append(round_number)
                         data["Type"].append("Aggregated")
-                        data["Group"].append(None)  # No specific group for aggregated metrics
+                        data["Group"].append("Na")  # No specific group for aggregated metrics
                         data["Accuracy"].append(accuracy)
                         data["F1 Score"].append(f1_score)
                         data["Log Loss"].append(log_loss)
