@@ -456,34 +456,74 @@ class FedCustom(Strategy):
 
         return best_cluster - 1, best_performance  # Adjust cluster index to match 0-based indexing
 
+    def _compute_cluster_accuracies(self, server_round: int, evaluation_file_path: str) -> List[float]:
+        """Extract the accuracy values for each cluster from the evaluation log file."""
+        cluster_accuracies = np.zeros(self.num_clusters)
+
+        try:
+            with open(evaluation_file_path, 'r') as file:
+                lines = file.readlines()
+
+            round_found = False
+            for line in lines:
+                if f"Round {server_round}" in line:
+                    round_found = True
+                    continue
+                if round_found and line.strip().startswith("Group-"):
+                    match_group = re.match(r'Group-(\d+): Accuracy:\s*([\d\.]+)', line)
+                    if match_group:
+                        group = int(match_group.group(1)) - 1  # Convert to 0-based index
+                        accuracy = float(match_group.group(2))
+                        cluster_accuracies[group] = accuracy
+                elif round_found and line.strip() == "":
+                    # End of the current round's section
+                    break
+
+            return cluster_accuracies
+
+        except FileNotFoundError:
+            print(f"[Round {server_round}] Warning: Evaluation file not found ({evaluation_file_path}). Defaulting to zeros.")
+            return np.zeros(self.num_clusters)
+        except Exception as e:
+            print(f"[Round {server_round}] Error reading evaluation file: {e}")
+            return np.zeros(self.num_clusters)
+
 
     def _select_best_model_and_save(self, server_round: int):
-        """Select the best-performing model based on evaluation and save it as the global model."""
+        """Select the best-performing model based on weighted cluster aggregation instead of full replacement."""
         evaluation_file_path = os.path.join(self.results_subfolder, "evaluation_loss.txt")
         
         try:
-            best_cluster, best_performance = self._select_best_model(server_round, evaluation_file_path)
+            # Retrieve accuracy for each cluster
+            cluster_accuracies = self._compute_cluster_accuracies(server_round, evaluation_file_path)
+            if not cluster_accuracies:
+                print(f"[Round {server_round}] No valid cluster found for selection. Skipping best model update.")
+                return
         except ValueError:
-            print(f"[Round {server_round}] No valid cluster found for selection. Skipping best model update.")
+            print(f"[Round {server_round}] No valid cluster metrics found. Skipping best model update.")
             return
 
-        # Ensure best_cluster exists in self.cluster_models
-        if best_cluster not in self.cluster_models or self.cluster_models[best_cluster] is None:
-            print(f"[Round {server_round}] Warning: Best cluster {best_cluster} not found in cluster_models. Choosing alternative.")
-            
-            # Find a valid cluster with trained parameters
-            valid_clusters = [c for c in self.cluster_models if self.cluster_models[c] is not None]
-            if not valid_clusters:
-                print(f"[Round {server_round}] No valid clusters available. Skipping best model update.")
-                return
-            
-            best_cluster = valid_clusters[0]  # Select the first valid cluster
-            print(f"[Round {server_round}] Using alternative cluster {best_cluster}.")
+        # Compute softmax weights for redistribution
+        exp_accuracies = np.exp(cluster_accuracies)
+        cluster_weights = exp_accuracies / np.sum(exp_accuracies)
 
-        print(f"Best model selected from Cluster-{best_cluster} with performance: {best_performance:.4f}")
+        print(f"[Round {server_round}] Cluster Weights: {cluster_weights}")
 
-        best_model_parameters = self.cluster_models[best_cluster]
+        # Aggregate models using weighted averaging
+        weighted_parameters = None
+        for cluster, weight in enumerate(cluster_weights):
+            if self.cluster_models[cluster] is not None:
+                cluster_params = parameters_to_ndarrays(self.cluster_models[cluster])
+                if weighted_parameters is None:
+                    weighted_parameters = [weight * param for param in cluster_params]
+                else:
+                    weighted_parameters = [w_p + weight * p for w_p, p in zip(weighted_parameters, cluster_params)]
 
+        if weighted_parameters is None:
+            print(f"[Round {server_round}] No valid clusters available. Skipping best model update.")
+            return
+
+        # Convert aggregated parameters back to a state dict
         if self.model_type == "Image Anomaly Detection":
             global_net = SparseAutoencoder()
         elif self.model_type == "Image Classification":
@@ -491,14 +531,13 @@ class FedCustom(Strategy):
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
 
-        state_dict = aggregated_parameters_to_state_dict(parameters_to_ndarrays(best_model_parameters), self.model_type)
+        state_dict = aggregated_parameters_to_state_dict(weighted_parameters, self.model_type)
         global_net.load_state_dict(state_dict)
 
-        # Save the best-performing model with a specific name
-        best_model_path = os.path.join(self.results_subfolder, "best_cluster_model.pth")
+        # Save the best-performing aggregated model
+        best_model_path = os.path.join(self.results_subfolder, "aggregated_best_model.pth")
         torch.save(global_net.state_dict(), best_model_path)
-        print(f"Best cluster model saved as {best_model_path}.")
-
+        print(f"Aggregated best model saved as {best_model_path}.")
 
 
     def aggregate_evaluate(

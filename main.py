@@ -257,7 +257,7 @@ def start_training(dataset_folder, train_test_split, seed, num_clients,
 
     #data_split = [0.30, 0.05, 0.025, 0.05, 0.10, 0.025, 0.05, 0.15, 0.05, 0.20]
     data_split = [0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]
-    trainloaders, testloaders = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type,3, data_split)
+    trainloaders, testloaders = load_datasets(num_clients, dataset_folder, train_transform, test_transform, model_type,5, data_split)
 
     strategy = FedCustom(
         initial_lr=initial_lr, 
