@@ -124,37 +124,87 @@ class FedCustom(Strategy):
 
         return fit_configurations
 
-    def aggregate_parameters(self, parameters_list: List[List[np.ndarray]], server_round: int) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
-        """Aggregate model parameters with optional dynamic grouping."""
+    def aggregate_parameters(self, parameters_list: List[List[np.ndarray]], server_round: int, client_metrics) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
+        """Aggregate model parameters with accuracy-based clustering. Ensure each cluster has at least one client in round 1 and maintain balance in later rounds."""
         num_models = len(parameters_list)
         cluster_labels = None
 
         if self.dynamic_grouping == 1:
-            # Apply clustering only on the first round or at intervals of clustering_frequency
-            if server_round == 1 or server_round % self.clustering_frequency == 0:
-                # Flatten the parameter arrays to create a feature vector for each model
-                flattened_parameters = [np.concatenate([param.flatten() for param in params]) for params in parameters_list]
+            # Round 1: Ensure every cluster has at least one client
+            if server_round == 1:
+                cluster_labels = np.zeros(num_models, dtype=int)
 
-                # Perform clustering using KMeans based on cosine similarity
-                similarity_matrix = cosine_similarity(flattened_parameters)
-                kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
-                cluster_labels = kmeans.fit_predict(similarity_matrix)
-                self.cluster_labels = cluster_labels  # Save the new cluster labels for use in subsequent rounds
+                # Step 1: Assign the first `num_clusters` clients to different clusters
+                shuffled_clients = np.random.permutation(num_models)
+                for i in range(min(self.num_clusters, num_models)):  # Avoid out-of-bounds errors
+                    cluster_labels[shuffled_clients[i]] = i
 
-                # Save the mapping of client IDs to cluster labels for consistency
+                # Step 2: Assign the remaining clients randomly across all clusters
+                for i in range(self.num_clusters, num_models):
+                    cluster_labels[shuffled_clients[i]] = np.random.randint(0, self.num_clusters)
+
+                self.cluster_labels = cluster_labels  # Save cluster labels for subsequent rounds
                 self.client_cluster_mapping = {i: cluster_labels[i] for i in range(num_models)}
+
+            # From Round 2 onwards: Cluster based on accuracy while ensuring each cluster has at least one client
+            elif server_round % self.clustering_frequency == 0:
+                accuracy_scores = np.array([metrics.get('accuracy', 0) for metrics in client_metrics]).reshape(-1, 1)
+
+                # Normalize accuracy scores for better separation
+                scaler = MinMaxScaler()
+                normalized_scores = scaler.fit_transform(accuracy_scores)
+
+                kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init='auto')
+                cluster_labels = kmeans.fit_predict(normalized_scores)
+
+                # Ensure every cluster has at least one client after clustering
+                cluster_counts = np.bincount(cluster_labels, minlength=self.num_clusters)
+                missing_clusters = np.where(cluster_counts == 0)[0]
+
+                if len(missing_clusters) > 0:
+                    print(f"[Warning] Clusters {missing_clusters.tolist()} have no clients after KMeans. Adjusting assignment.")
+
+                    # Sort clients by accuracy to distribute them evenly
+                    sorted_clients = np.argsort(normalized_scores.flatten())
+
+                    # Move clients from the largest cluster into missing clusters
+                    for missing_cluster in missing_clusters:
+                        # Find the most populated cluster
+                        overpopulated_cluster = np.argmax(cluster_counts)
+                        overpopulated_clients = np.where(cluster_labels == overpopulated_cluster)[0]
+
+                        # Move the lowest accuracy client from that cluster to the missing cluster
+                        if len(overpopulated_clients) > 1:
+                            client_to_move = overpopulated_clients[0]  # Move the lowest accuracy client
+                            cluster_labels[client_to_move] = missing_cluster
+                            cluster_counts[overpopulated_cluster] -= 1
+                            cluster_counts[missing_cluster] += 1
+
+                # **Prevent one cluster from dominating**
+                max_clients_per_cluster = num_models // self.num_clusters
+                for cluster in range(self.num_clusters):
+                    if cluster_counts[cluster] > max_clients_per_cluster:
+                        # Move extra clients to underpopulated clusters
+                        extra_clients = np.where(cluster_labels == cluster)[0][max_clients_per_cluster:]
+                        underpopulated_clusters = np.where(cluster_counts < max_clients_per_cluster)[0]
+
+                        for client in extra_clients:
+                            if len(underpopulated_clusters) > 0:
+                                new_cluster = underpopulated_clusters[0]
+                                cluster_labels[client] = new_cluster
+                                cluster_counts[cluster] -= 1
+                                cluster_counts[new_cluster] += 1
+                                if cluster_counts[new_cluster] >= max_clients_per_cluster:
+                                    underpopulated_clusters = np.delete(underpopulated_clusters, 0)
+
+                self.cluster_labels = cluster_labels  # Save new cluster labels
+                self.client_cluster_mapping = {i: cluster_labels[i] for i in range(num_models)}
+
             else:
-                # Use previously stored cluster labels if not clustering round
+                # Use previously stored cluster labels if not a clustering round
                 cluster_labels = self.cluster_labels
                 if cluster_labels is None:
                     raise ValueError("Cluster labels not initialized.")
-
-                # Ensure client_cluster_mapping is initialized correctly
-                if not hasattr(self, 'client_cluster_mapping') or len(self.client_cluster_mapping) < num_models:
-                    self.client_cluster_mapping = {i: cluster_labels[i] for i in range(num_models)}
-
-                # Use the saved client-cluster mapping to ensure consistency
-                cluster_labels = np.array([self.client_cluster_mapping.get(i, cluster_labels[i]) for i in range(num_models)])
 
             # Aggregate parameters within each cluster
             aggregated_parameters = []
@@ -164,7 +214,7 @@ class FedCustom(Strategy):
                     cluster_aggregated_parameters = [np.mean(np.array(param_tuple), axis=0) for param_tuple in zip(*cluster_parameters)]
                     aggregated_parameters.append(cluster_aggregated_parameters)
 
-            # Further aggregate the cluster centers to obtain the final parameters
+            # Further aggregate cluster centers to obtain final parameters
             if aggregated_parameters:
                 final_aggregated_parameters = [np.mean(np.array(param_tuple), axis=0) for param_tuple in zip(*aggregated_parameters)]
             else:
@@ -177,6 +227,9 @@ class FedCustom(Strategy):
             final_aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
 
         return final_aggregated_parameters, cluster_labels
+
+
+
 
     def _save_cluster_assignments(self, results, cluster_labels, server_round):
         """Save the cluster assignments for each client in a single file with fixed client IDs assigned to clusters."""
@@ -217,8 +270,6 @@ class FedCustom(Strategy):
             txt_file.write("\n")
 
 
-
-
     def aggregate_fit(
         self, server_round: int, results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
         failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]]
@@ -230,14 +281,22 @@ class FedCustom(Strategy):
 
         parameters_list = [parameters_to_ndarrays(res.parameters) for client, res in results]
 
+        # Extract client accuracy from results
+        client_metrics = []
+        for client, res in results:
+            metrics = res.metrics
+            client_metrics.append({
+                "client_id": client.cid,
+                "accuracy": metrics.get('accuracy', 0),  # Use accuracy for clustering
+            })
+
         if self.dynamic_grouping == 1:
-            # Perform clustering and aggregate parameters for each cluster
-            aggregated_parameters, cluster_labels = self.aggregate_parameters(parameters_list, server_round)
+            # Perform clustering based on accuracy and aggregate parameters for each cluster
+            aggregated_parameters, cluster_labels = self.aggregate_parameters(parameters_list, server_round, client_metrics)
             self.cluster_labels = cluster_labels  # Store cluster labels for this round
 
             # Save cluster assignments
             self._save_cluster_assignments(results, cluster_labels, server_round)
-
         else:
             # Default global aggregation logic
             aggregated_parameters = [np.mean(param_tuple, axis=0) for param_tuple in zip(*parameters_list)]
@@ -245,6 +304,8 @@ class FedCustom(Strategy):
         aggregated_parameters_fl = fl.common.ndarrays_to_parameters(aggregated_parameters)
 
         return aggregated_parameters_fl, {}
+
+
 
 
     def configure_evaluate(self, server_round: int, parameters: fl.common.Parameters, client_manager: fl.server.ClientManager) -> List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateIns]]:
@@ -397,18 +458,38 @@ class FedCustom(Strategy):
 
 
     def _select_best_model_and_save(self, server_round: int):
-        """Select the best-performing model based on evaluation loss and save it as the global model."""
+        """Select the best-performing model based on evaluation and save it as the global model."""
         evaluation_file_path = os.path.join(self.results_subfolder, "evaluation_loss.txt")
-        best_cluster, best_performance = self._select_best_model(server_round, evaluation_file_path)
+        
+        try:
+            best_cluster, best_performance = self._select_best_model(server_round, evaluation_file_path)
+        except ValueError:
+            print(f"[Round {server_round}] No valid cluster found for selection. Skipping best model update.")
+            return
+
+        # Ensure best_cluster exists in self.cluster_models
+        if best_cluster not in self.cluster_models or self.cluster_models[best_cluster] is None:
+            print(f"[Round {server_round}] Warning: Best cluster {best_cluster} not found in cluster_models. Choosing alternative.")
+            
+            # Find a valid cluster with trained parameters
+            valid_clusters = [c for c in self.cluster_models if self.cluster_models[c] is not None]
+            if not valid_clusters:
+                print(f"[Round {server_round}] No valid clusters available. Skipping best model update.")
+                return
+            
+            best_cluster = valid_clusters[0]  # Select the first valid cluster
+            print(f"[Round {server_round}] Using alternative cluster {best_cluster}.")
 
         print(f"Best model selected from Cluster-{best_cluster} with performance: {best_performance:.4f}")
 
-        # Use the best cluster model and save it as the global model
         best_model_parameters = self.cluster_models[best_cluster]
+
         if self.model_type == "Image Anomaly Detection":
             global_net = SparseAutoencoder()
         elif self.model_type == "Image Classification":
             global_net = MobileNetV3()
+        else:
+            raise ValueError(f"Unsupported model_type: {self.model_type}")
 
         state_dict = aggregated_parameters_to_state_dict(parameters_to_ndarrays(best_model_parameters), self.model_type)
         global_net.load_state_dict(state_dict)
